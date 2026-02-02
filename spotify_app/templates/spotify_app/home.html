@@ -1,0 +1,28 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>VibeSync - Spotify</title>
+  </head>
+  <body>
+    <h1>Spotify Auth</h1>
+
+    {% if authed %}
+      <p>✅ Connected.</p>
+      <a href="/spotify/logout/"><button>Logout</button></a>
+      <button onclick="checkMe()">Check /me</button>
+      <pre id="out"></pre>
+    {% else %}
+      <p>Not connected yet.</p>
+      <a href="/spotify/login/"><button>Connect Spotify</button></a>
+    {% endif %}
+
+    <script>
+      async function checkMe() {
+        const res = await fetch("/spotify/api/me/");
+        const data = await res.json();
+        document.getElementById("out").textContent = JSON.stringify(data, null, 2);
+      }
+    </script>
+  </body>
+</html>

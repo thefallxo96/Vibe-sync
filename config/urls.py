@@ -19,5 +19,6 @@ from django.urls import path, include
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("", include("vibes.urls")),
+    path("", include("vibes.urls")),               # your main app home
+    path("spotify/", include("spotify_app.urls")), # spotify section
 ]
