@@ -2,27 +2,329 @@
 <html>
   <head>
     <meta charset="utf-8" />
-    <title>VibeSync - Spotify</title>
+    <title>VibeSync</title>
+    <style>
+      :root {
+        --bg: #0b0f1a;
+        --panel: #151a2a;
+        --text: #e7e9f3;
+        --muted: #9aa4b2;
+        --accent: #38bdf8;
+        --glow: rgba(56, 189, 248, 0.35);
+      }
+      body {
+        font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
+        margin: 0;
+        background: radial-gradient(circle at top, #182034, #0b0f1a);
+        color: var(--text);
+        padding: 40px;
+        position: relative;
+        overflow-x: hidden;
+      }
+      .glow {
+        position: fixed;
+        width: 600px;
+        height: 600px;
+        top: -180px;
+        right: -200px;
+        background: radial-gradient(circle, var(--glow), transparent 70%);
+        filter: blur(10px);
+        opacity: 0.9;
+        animation: float 8s ease-in-out infinite;
+        pointer-events: none;
+        z-index: 0;
+      }
+      @keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(25px); }
+        100% { transform: translateY(0px); }
+      }
+      .container { max-width: 760px; margin: 0 auto; position: relative; z-index: 1; }
+      .card {
+        background: var(--panel);
+        padding: 20px;
+        border-radius: 16px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.35);
+        margin-top: 20px;
+      }
+      button {
+        margin-right: 8px;
+        padding: 10px 14px;
+        border-radius: 10px;
+        border: none;
+        background: var(--accent);
+        color: #001018;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button.secondary {
+        background: #2b3348;
+        color: var(--text);
+      }
+      select {
+        background: #101522;
+        color: var(--text);
+        border: 1px solid #2b3348;
+        border-radius: 8px;
+        padding: 8px 10px;
+        margin-right: 8px;
+      }
+      input[type="range"] { vertical-align: middle; width: 160px; }
+      .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+      .muted { color: var(--muted); font-size: 14px; }
+      .pill {
+        background: #22304f;
+        color: #9ad7ff;
+        padding: 6px 12px;
+        border-radius: 999px;
+        font-weight: 600;
+        display: inline-block;
+      }
+      .track {
+        display: flex;
+        gap: 16px;
+        align-items: center;
+        margin-top: 12px;
+      }
+      .art {
+        width: 120px;
+        height: 120px;
+        border-radius: 12px;
+        object-fit: cover;
+        background: #0d1222;
+      }
+      pre { background: #0d1222; color: #cbd5e1; padding: 12px; border-radius: 10px; overflow-x: auto; }
+      #progress-bar {
+        box-shadow: 0 0 12px var(--glow), 0 0 24px var(--glow);
+      }
+      .pulse {
+        animation: pulse 0.5s ease-out;
+      }
+      @keyframes pulse {
+        0% { transform: scale(0.995); opacity: 0.7; }
+        100% { transform: scale(1); opacity: 1; }
+      }
+    </style>
   </head>
   <body>
-    <h1>Spotify Auth</h1>
+    <div class="glow" id="glow"></div>
 
-    {% if authed %}
-      <p>✅ Connected.</p>
-      <a href="/spotify/logout/"><button>Logout</button></a>
-      <button onclick="checkMe()">Check /me</button>
-      <pre id="out"></pre>
-    {% else %}
-      <p>Not connected yet.</p>
-      <a href="/spotify/login/"><button>Connect Spotify</button></a>
-    {% endif %}
+    <div class="container">
+      <h1>VibeSync</h1>
+      <p class="muted">Mood-mapping your Spotify in real time.</p>
+
+      {% if authed %}
+        <div class="card">
+          <div class="row" style="margin-bottom: 12px;">
+            <button onclick="play()">Play</button>
+            <button onclick="pause()" class="secondary">Pause</button>
+            <input type="range" min="0" max="100" value="50" oninput="setVolume(this.value)" />
+            <button onclick="checkVibe()" class="secondary">Vibe Check</button>
+            <a href="/spotify/logout/"><button class="secondary">Logout</button></a>
+          </div>
+
+          <div id="status" class="muted">Click “Vibe Check” to load current track + mood.</div>
+          <div id="track" class="track"></div>
+
+          <div id="progress-wrap" style="margin-top: 12px;">
+            <div style="height: 6px; background:#0d1222; border-radius: 999px; overflow:hidden;">
+              <div id="progress-bar" style="height: 6px; width: 0%; background: #38bdf8;"></div>
+            </div>
+            <div class="muted" style="margin-top:6px;">
+              <span id="time-elapsed">0:00</span> / <span id="time-total">0:00</span>
+            </div>
+          </div>
+
+          <div class="row" style="margin-top: 14px;">
+            <span class="muted">Add to mood:</span>
+            <select id="moodSelect">
+              <option>Hype</option>
+              <option>Chill</option>
+              <option>Sad</option>
+              <option>Romantic</option>
+              <option>Menacing</option>
+              <option>Neutral</option>
+            </select>
+            <button onclick="addMood('app')">App</button>
+            <button onclick="addMood('spotify')" class="secondary">Spotify</button>
+            <button onclick="addMood('both')" class="secondary">Both</button>
+          </div>
+        </div>
+
+        <details style="margin-top: 14px;">
+          <summary class="muted">Debug JSON</summary>
+          <pre id="out"></pre>
+        </details>
+      {% else %}
+        <div class="card">
+          <p>Not connected yet.</p>
+          <a href="/spotify/login/"><button>Connect Spotify</button></a>
+        </div>
+      {% endif %}
+    </div>
 
     <script>
-      async function checkMe() {
-        const res = await fetch("/spotify/api/me/");
+      let webPlayer;
+      let vibeTimer = null;
+      let lastProgress = 0;
+      let lastDuration = 0;
+      let lastTick = 0;
+
+      window.onSpotifyWebPlaybackSDKReady = () => {
+        initWebPlayback();
+      };
+
+      async function initWebPlayback() {
+        const tokenRes = await fetch("/spotify/api/token/");
+        const tokenData = await tokenRes.json();
+        if (!tokenData.authenticated) return;
+
+        const token = tokenData.access_token;
+
+        webPlayer = new Spotify.Player({
+          name: "VibeSync Web Player",
+          getOAuthToken: cb => cb(token),
+          volume: 0.5
+        });
+
+        webPlayer.addListener("ready", async ({ device_id }) => {
+          await fetch(`/spotify/api/transfer/?device_id=${device_id}`);
+        });
+
+        webPlayer.connect();
+      }
+
+      function fmt(ms) {
+        if (!ms && ms !== 0) return "0:00";
+        const total = Math.floor(ms / 1000);
+        const m = Math.floor(total / 60);
+        const s = String(total % 60).padStart(2, "0");
+        return `${m}:${s}`;
+      }
+
+      function updateProgress(progress, duration) {
+        const bar = document.getElementById("progress-bar");
+        const elapsed = document.getElementById("time-elapsed");
+        const total = document.getElementById("time-total");
+
+        if (!duration) {
+          bar.style.width = "0%";
+          elapsed.textContent = "0:00";
+          total.textContent = "0:00";
+          return;
+        }
+
+        const pct = Math.min(100, Math.max(0, (progress / duration) * 100));
+        bar.style.width = `${pct}%`;
+        elapsed.textContent = fmt(progress);
+        total.textContent = fmt(duration);
+      }
+
+      function animateProgress() {
+        if (!lastDuration) return;
+        const now = Date.now();
+        const elapsed = now - lastTick;
+        const progress = Math.min(lastDuration, lastProgress + elapsed);
+
+        updateProgress(progress, lastDuration);
+        requestAnimationFrame(animateProgress);
+      }
+
+      function setGlow(mood) {
+        const map = {
+          hype: "rgba(255, 87, 51, 0.5)",
+          menacing: "rgba(180, 0, 0, 0.5)",
+          sad: "rgba(59, 130, 246, 0.45)",
+          chill: "rgba(16, 185, 129, 0.45)",
+          romantic: "rgba(236, 72, 153, 0.45)",
+          neutral: "rgba(56, 189, 248, 0.35)",
+          unknown: "rgba(56, 189, 248, 0.35)",
+        };
+
+        const key = mood.toLowerCase();
+        document.documentElement.style.setProperty("--glow", map[key] || map.neutral);
+        document.getElementById("glow").style.background =
+          `radial-gradient(circle, ${map[key] || map.neutral}, transparent 70%)`;
+      }
+
+      async function checkVibe() {
+        const res = await fetch("/spotify/api/vibe/");
+        const data = await res.json();
+        document.getElementById("out").textContent = JSON.stringify(data, null, 2);
+
+        if (!data.playing) {
+          document.getElementById("status").textContent = data.message || "Nothing playing.";
+          document.getElementById("track").innerHTML = "";
+          updateProgress(0, 0);
+          lastDuration = 0;
+          setGlow("neutral");
+          return;
+        }
+
+        const track = data.track || {};
+        const mood = data.mood || "unknown";
+
+        const statusEl = document.getElementById("status");
+        const trackEl = document.getElementById("track");
+
+        statusEl.innerHTML = `<span class="pill">${mood.toUpperCase()}</span>`;
+        trackEl.innerHTML = `
+          <img class="art" src="${track.image || ""}" alt="album art" />
+          <div>
+            <div style="font-size: 18px; font-weight: 600;">${track.name || "Unknown Track"}</div>
+            <div class="muted">${(track.artists || []).join(", ")} — ${track.album || ""}</div>
+            ${track.spotify_url ? `<a class="muted" href="${track.spotify_url}" target="_blank">Open in Spotify</a>` : ""}
+          </div>
+        `;
+
+        statusEl.classList.remove("pulse");
+        trackEl.classList.remove("pulse");
+        void statusEl.offsetWidth;
+        void trackEl.offsetWidth;
+        statusEl.classList.add("pulse");
+        trackEl.classList.add("pulse");
+
+        setGlow(mood);
+
+        lastProgress = track.progress_ms || 0;
+        lastDuration = track.duration_ms || 0;
+        lastTick = Date.now();
+        updateProgress(lastProgress, lastDuration);
+      }
+
+      async function play() {
+        await fetch("/spotify/api/play/");
+      }
+
+      async function pause() {
+        await fetch("/spotify/api/pause/");
+      }
+
+      async function setVolume(v) {
+        await fetch(`/spotify/api/volume/?v=${v}`);
+      }
+
+      async function addMood(target) {
+        const mood = document.getElementById("moodSelect").value;
+        let url = "/spotify/api/mood/add-app/";
+        if (target === "spotify") url = "/spotify/api/mood/add-spotify/";
+        if (target === "both") url = "/spotify/api/mood/add-both/";
+
+        const res = await fetch(`${url}?mood=${encodeURIComponent(mood)}`);
         const data = await res.json();
         document.getElementById("out").textContent = JSON.stringify(data, null, 2);
       }
+
+      function startAutoRefresh() {
+        if (vibeTimer) return;
+        vibeTimer = setInterval(checkVibe, 1000);
+        requestAnimationFrame(animateProgress);
+      }
+
+      checkVibe();
+      startAutoRefresh();
     </script>
+
+    <script src="https://sdk.scdn.co/spotify-player.js"></script>
   </body>
 </html>

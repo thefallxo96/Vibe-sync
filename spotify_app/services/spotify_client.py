@@ -6,36 +6,35 @@ AUTH_URL = "https://accounts.spotify.com/authorize"
 TOKEN_URL = "https://accounts.spotify.com/api/token"
 API_BASE = "https://api.spotify.com/v1"
 
-SCOPES = "user-read-currently-playing user-read-playback-state"
+SCOPES = (
+    "streaming user-read-playback-state user-modify-playback-state user-read-currently-playing "
+    "playlist-modify-private playlist-modify-public"
+)
+
+
+def spotify_get(url: str, access_token: str) -> requests.Response:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return requests.get(url, headers=headers, timeout=15)
+
+
+def spotify_put(url: str, access_token: str, json: dict | None = None) -> requests.Response:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return requests.put(url, headers=headers, json=json, timeout=15)
 
 
 def get_login_url(state: str) -> str:
-    """
-    Build the Spotify authorize URL (Authorization Code flow).
-    """
-    if not settings.SPOTIFY_CLIENT_ID or not settings.SPOTIFY_REDIRECT_URI:
-        raise RuntimeError("Missing SPOTIFY_CLIENT_ID or SPOTIFY_REDIRECT_URI in settings.")
-
     params = {
         "response_type": "code",
         "client_id": settings.SPOTIFY_CLIENT_ID,
         "scope": SCOPES,
         "redirect_uri": settings.SPOTIFY_REDIRECT_URI,
         "state": state,
-        "show_dialog": "false",
+        "show_dialog": "true",
     }
-    req = requests.Request("GET", AUTH_URL, params=params).prepare()
-    return req.url
+    return requests.Request("GET", AUTH_URL, params=params).prepare().url
 
 
 def exchange_code_for_token(code: str) -> dict:
-    """
-    Exchange authorization code for access + refresh tokens.
-    Returns payload with expires_at added.
-    """
-    if not settings.SPOTIFY_CLIENT_ID or not settings.SPOTIFY_CLIENT_SECRET or not settings.SPOTIFY_REDIRECT_URI:
-        raise RuntimeError("Missing Spotify credentials in settings.")
-
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -45,19 +44,12 @@ def exchange_code_for_token(code: str) -> dict:
     }
     r = requests.post(TOKEN_URL, data=data, timeout=15)
     r.raise_for_status()
-
     payload = r.json()
-    payload["expires_at"] = int(time.time()) + int(payload.get("expires_in", 3600))
+    payload["expires_at"] = int(time.time()) + payload.get("expires_in", 3600)
     return payload
 
 
 def refresh_access_token(refresh_token: str) -> dict:
-    """
-    Use refresh token to get a new access token.
-    """
-    if not settings.SPOTIFY_CLIENT_ID or not settings.SPOTIFY_CLIENT_SECRET:
-        raise RuntimeError("Missing Spotify credentials in settings.")
-
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -66,15 +58,87 @@ def refresh_access_token(refresh_token: str) -> dict:
     }
     r = requests.post(TOKEN_URL, data=data, timeout=15)
     r.raise_for_status()
-
     payload = r.json()
-    payload["expires_at"] = int(time.time()) + int(payload.get("expires_in", 3600))
+    payload["expires_at"] = int(time.time()) + payload.get("expires_in", 3600)
     return payload
 
 
-def spotify_get(url: str, access_token: str) -> requests.Response:
-    """
-    Helper for GET calls to Spotify API.
-    """
-    headers = {"Authorization": f"Bearer {access_token}"}
-    return requests.get(url, headers=headers, timeout=15)
+def get_now_playing(access_token: str) -> dict | None:
+    r = spotify_get(f"{API_BASE}/me/player/currently-playing", access_token)
+    if r.status_code == 204:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
+def get_player_state(access_token: str) -> dict | None:
+    r = spotify_get(f"{API_BASE}/me/player", access_token)
+    if r.status_code == 204:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
+def get_audio_features(track_id: str, access_token: str) -> dict | None:
+    r = spotify_get(f"{API_BASE}/audio-features/{track_id}", access_token)
+    if r.status_code == 403:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
+def spotify_get_devices(access_token: str) -> dict:
+    r = spotify_get(f"{API_BASE}/me/player/devices", access_token)
+    r.raise_for_status()
+    return r.json()
+
+
+def spotify_transfer_playback(access_token: str, device_id: str, play: bool = True) -> None:
+    body = {"device_ids": [device_id], "play": play}
+    r = spotify_put(f"{API_BASE}/me/player", access_token, json=body)
+    r.raise_for_status()
+
+
+def spotify_play(access_token: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/play"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_put(url, access_token)
+    r.raise_for_status()
+
+
+def spotify_pause(access_token: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/pause"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_put(url, access_token)
+    r.raise_for_status()
+
+
+def spotify_set_volume(access_token: str, volume_percent: int, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/volume?volume_percent={volume_percent}"
+    if device_id:
+        url += f"&device_id={device_id}"
+    r = spotify_put(url, access_token)
+    r.raise_for_status()
+
+
+def spotify_get_me(access_token: str) -> dict:
+    r = spotify_get(f"{API_BASE}/me", access_token)
+    r.raise_for_status()
+    return r.json()
+
+
+def spotify_create_playlist(access_token: str, user_id: str, name: str) -> dict:
+    url = f"{API_BASE}/users/{user_id}/playlists"
+    body = {"name": name, "public": False, "description": "Created by VibeSync"}
+    r = requests.post(url, headers={"Authorization": f"Bearer {access_token}"}, json=body, timeout=15)
+    r.raise_for_status()
+    return r.json()
+
+
+def spotify_add_tracks(access_token: str, playlist_id: str, track_uri: str) -> None:
+    url = f"{API_BASE}/playlists/{playlist_id}/tracks"
+    body = {"uris": [track_uri]}
+    r = requests.post(url, headers={"Authorization": f"Bearer {access_token}"}, json=body, timeout=15)
+    r.raise_for_status()
