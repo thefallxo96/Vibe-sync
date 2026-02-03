@@ -7,22 +7,45 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 API_BASE = "https://api.spotify.com/v1"
 
 SCOPES = (
-    "streaming user-read-playback-state user-modify-playback-state user-read-currently-playing "
-    "playlist-modify-private playlist-modify-public"
+    "streaming user-read-playback-state user-modify-playback-state "
+    "user-read-currently-playing playlist-modify-private playlist-modify-public"
 )
 
 
+def _require_settings():
+    missing = []
+    if not settings.SPOTIFY_CLIENT_ID:
+        missing.append("SPOTIFY_CLIENT_ID")
+    if not settings.SPOTIFY_CLIENT_SECRET:
+        missing.append("SPOTIFY_CLIENT_SECRET")
+    if not settings.SPOTIFY_REDIRECT_URI:
+        missing.append("SPOTIFY_REDIRECT_URI")
+    if missing:
+        raise RuntimeError(f"Missing settings: {', '.join(missing)}")
+
+
+def _headers(token: str):
+    return {"Authorization": f"Bearer {token}"}
+
+
 def spotify_get(url: str, access_token: str) -> requests.Response:
-    headers = {"Authorization": f"Bearer {access_token}"}
-    return requests.get(url, headers=headers, timeout=15)
+    return requests.get(url, headers=_headers(access_token), timeout=15)
 
 
 def spotify_put(url: str, access_token: str, json: dict | None = None) -> requests.Response:
-    headers = {"Authorization": f"Bearer {access_token}"}
-    return requests.put(url, headers=headers, json=json, timeout=15)
+    return requests.put(url, headers=_headers(access_token), json=json, timeout=15)
+
+
+def spotify_post(url: str, access_token: str, json: dict | None = None) -> requests.Response:
+    return requests.post(url, headers=_headers(access_token), json=json, timeout=15)
+
+
+def spotify_delete(url: str, access_token: str, json: dict | None = None) -> requests.Response:
+    return requests.delete(url, headers=_headers(access_token), json=json, timeout=15)
 
 
 def get_login_url(state: str) -> str:
+    _require_settings()
     params = {
         "response_type": "code",
         "client_id": settings.SPOTIFY_CLIENT_ID,
@@ -35,6 +58,7 @@ def get_login_url(state: str) -> str:
 
 
 def exchange_code_for_token(code: str) -> dict:
+    _require_settings()
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -50,6 +74,7 @@ def exchange_code_for_token(code: str) -> dict:
 
 
 def refresh_access_token(refresh_token: str) -> dict:
+    _require_settings()
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -132,7 +157,7 @@ def spotify_get_me(access_token: str) -> dict:
 def spotify_create_playlist(access_token: str, user_id: str, name: str) -> dict:
     url = f"{API_BASE}/users/{user_id}/playlists"
     body = {"name": name, "public": False, "description": "Created by VibeSync"}
-    r = requests.post(url, headers={"Authorization": f"Bearer {access_token}"}, json=body, timeout=15)
+    r = spotify_post(url, access_token, json=body)
     r.raise_for_status()
     return r.json()
 
@@ -140,5 +165,55 @@ def spotify_create_playlist(access_token: str, user_id: str, name: str) -> dict:
 def spotify_add_tracks(access_token: str, playlist_id: str, track_uri: str) -> None:
     url = f"{API_BASE}/playlists/{playlist_id}/tracks"
     body = {"uris": [track_uri]}
-    r = requests.post(url, headers={"Authorization": f"Bearer {access_token}"}, json=body, timeout=15)
+    r = spotify_post(url, access_token, json=body)
+    r.raise_for_status()
+
+
+def spotify_playlist_has_track(access_token: str, playlist_id: str, track_id: str) -> bool:
+    offset = 0
+    while offset < 200:
+        url = f"{API_BASE}/playlists/{playlist_id}/tracks?fields=items(track(id))&limit=100&offset={offset}"
+        r = spotify_get(url, access_token)
+        r.raise_for_status()
+        items = r.json().get("items", [])
+        if any(i.get("track", {}).get("id") == track_id for i in items):
+            return True
+        if len(items) < 100:
+            break
+        offset += 100
+    return False
+
+
+def spotify_remove_track(access_token: str, playlist_id: str, track_uri: str) -> None:
+    url = f"{API_BASE}/playlists/{playlist_id}/tracks"
+    body = {"tracks": [{"uri": track_uri}]}
+    r = spotify_delete(url, access_token, json=body)
+    r.raise_for_status()
+
+def spotify_post(url: str, access_token: str, json: dict | None = None) -> requests.Response:
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return requests.post(url, headers=headers, json=json, timeout=15)
+
+
+def spotify_next(access_token: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/next"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_post(url, access_token)
+    r.raise_for_status()
+
+
+def spotify_previous(access_token: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/previous"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_post(url, access_token)
+    r.raise_for_status()
+
+
+def spotify_queue_track(access_token: str, track_uri: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/queue?uri={track_uri}"
+    if device_id:
+        url += f"&device_id={device_id}"
+    r = spotify_post(url, access_token)
     r.raise_for_status()

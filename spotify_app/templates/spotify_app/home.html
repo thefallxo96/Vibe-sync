@@ -5,32 +5,37 @@
     <title>VibeSync</title>
     <style>
       :root {
-        --bg: #0b0f1a;
+        --bg1: #111827;
+        --bg2: #0b0f1a;
         --panel: #151a2a;
+        --panel-2: #101626;
         --text: #e7e9f3;
         --muted: #9aa4b2;
         --accent: #38bdf8;
         --glow: rgba(56, 189, 248, 0.35);
+        --pulse-speed: 2.2s;
       }
+      * { box-sizing: border-box; }
       body {
         font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
         margin: 0;
-        background: radial-gradient(circle at top, #182034, #0b0f1a);
+        background: radial-gradient(circle at top, var(--bg1), var(--bg2));
         color: var(--text);
         padding: 40px;
         position: relative;
         overflow-x: hidden;
+        transition: background 0.6s ease;
       }
       .glow {
         position: fixed;
-        width: 600px;
-        height: 600px;
-        top: -180px;
-        right: -200px;
+        width: 640px;
+        height: 640px;
+        top: -200px;
+        right: -220px;
         background: radial-gradient(circle, var(--glow), transparent 70%);
         filter: blur(10px);
         opacity: 0.9;
-        animation: float 8s ease-in-out infinite;
+        animation: float 8s ease-in-out infinite, moodPulse var(--pulse-speed) ease-in-out infinite;
         pointer-events: none;
         z-index: 0;
       }
@@ -39,14 +44,26 @@
         50% { transform: translateY(25px); }
         100% { transform: translateY(0px); }
       }
-      .container { max-width: 760px; margin: 0 auto; position: relative; z-index: 1; }
+      @keyframes moodPulse {
+        0% { opacity: 0.55; transform: scale(0.98); }
+        50% { opacity: 1; transform: scale(1.02); }
+        100% { opacity: 0.55; transform: scale(0.98); }
+      }
+
+      .container { max-width: 1040px; margin: 0 auto; position: relative; z-index: 1; }
+      .header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+      .header h1 { margin: 0; font-size: 28px; letter-spacing: 0.3px; }
+      .header p { margin: 6px 0 0; }
+
+      .grid { display: grid; grid-template-columns: 1.1fr 0.9fr; gap: 20px; margin-top: 20px; }
+      .stack { display: grid; gap: 20px; }
       .card {
         background: var(--panel);
         padding: 20px;
         border-radius: 16px;
         box-shadow: 0 10px 30px rgba(0,0,0,0.35);
-        margin-top: 20px;
       }
+
       button {
         margin-right: 8px;
         padding: 10px 14px;
@@ -57,11 +74,9 @@
         font-weight: 600;
         cursor: pointer;
       }
-      button.secondary {
-        background: #2b3348;
-        color: var(--text);
-      }
-      select {
+      button.secondary { background: #2b3348; color: var(--text); }
+
+      select, input[type="text"] {
         background: #101522;
         color: var(--text);
         border: 1px solid #2b3348;
@@ -69,6 +84,7 @@
         padding: 8px 10px;
         margin-right: 8px;
       }
+
       input[type="range"] { vertical-align: middle; width: 160px; }
       .row { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
       .muted { color: var(--muted); font-size: 14px; }
@@ -80,45 +96,49 @@
         font-weight: 600;
         display: inline-block;
       }
-      .track {
-        display: flex;
-        gap: 16px;
-        align-items: center;
-        margin-top: 12px;
-      }
-      .art {
-        width: 120px;
-        height: 120px;
-        border-radius: 12px;
-        object-fit: cover;
-        background: #0d1222;
-      }
+      .track { display: flex; gap: 16px; align-items: center; margin-top: 12px; }
+      .art { width: 120px; height: 120px; border-radius: 12px; object-fit: cover; background: #0d1222; }
       pre { background: #0d1222; color: #cbd5e1; padding: 12px; border-radius: 10px; overflow-x: auto; }
-      #progress-bar {
-        box-shadow: 0 0 12px var(--glow), 0 0 24px var(--glow);
-      }
-      .pulse {
-        animation: pulse 0.5s ease-out;
-      }
+      #progress-bar { box-shadow: 0 0 12px var(--glow), 0 0 24px var(--glow); }
+      .pulse { animation: pulse 0.5s ease-out; }
       @keyframes pulse {
         0% { transform: scale(0.995); opacity: 0.7; }
         100% { transform: scale(1); opacity: 1; }
       }
+      .mood-entry {
+        display:flex; gap:10px; align-items:center;
+        background: var(--panel-2);
+        padding:8px 10px; border-radius:10px;
+      }
+      .mood-entry img {
+        width:48px;height:48px;border-radius:8px;object-fit:cover;background:#111;
+      }
+      .section-title { margin: 0 0 10px; font-size: 16px; color: #cbd5e1; }
+      .mini { font-size: 12px; color: var(--muted); }
     </style>
   </head>
   <body>
     <div class="glow" id="glow"></div>
 
     <div class="container">
-      <h1>VibeSync</h1>
-      <p class="muted">Mood-mapping your Spotify in real time.</p>
+      <div class="header">
+        <div>
+          <h1>VibeSync</h1>
+          <p class="muted">Mood‑mapping your Spotify in real time.</p>
+        </div>
+      </div>
 
       {% if authed %}
+      <div class="grid">
         <div class="card">
           <div class="row" style="margin-bottom: 12px;">
             <button onclick="play()">Play</button>
             <button onclick="pause()" class="secondary">Pause</button>
+            <button onclick="previous()" class="secondary">Prev</button>
+            <button onclick="nextTrack()" class="secondary">Next</button>
             <input type="range" min="0" max="100" value="50" oninput="setVolume(this.value)" />
+            <input id="queueInput" type="text" placeholder="Paste Spotify track URL" style="width: 240px;" />
+            <button onclick="queueTrack()" class="secondary">Queue</button>
             <button onclick="checkVibe()" class="secondary">Vibe Check</button>
             <a href="/spotify/logout/"><button class="secondary">Logout</button></a>
           </div>
@@ -151,10 +171,56 @@
           </div>
         </div>
 
-        <details style="margin-top: 14px;">
-          <summary class="muted">Debug JSON</summary>
-          <pre id="out"></pre>
-        </details>
+        <div class="stack">
+          <div class="card">
+            <div class="section-title">Mood Board</div>
+            <div class="row" style="margin-bottom:10px;">
+              <input id="searchInput" type="text" placeholder="Search songs…" oninput="renderMoodBoard()" />
+              <select id="sortSelect" onchange="renderMoodBoard()">
+                <option value="newest">Newest</option>
+                <option value="oldest">Oldest</option>
+                <option value="az">A → Z</option>
+                <option value="za">Z → A</option>
+              </select>
+            </div>
+            <div id="mood-board"></div>
+          </div>
+
+          <div class="card">
+            <div class="section-title">History (Last 20)</div>
+            <div id="history"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="grid" style="grid-template-columns: 1fr 1fr; margin-top:20px;">
+        <div class="card">
+          <div class="section-title">Analytics</div>
+          <canvas id="moodChart" height="180"></canvas>
+          <div id="topArtists" class="mini" style="margin-top:8px;"></div>
+        </div>
+
+        <div class="card">
+          <div class="section-title">Goal Mood</div>
+          <div class="row">
+            <select id="goalSelect">
+              <option>Hype</option>
+              <option>Chill</option>
+              <option>Sad</option>
+              <option>Romantic</option>
+              <option>Menacing</option>
+              <option>Neutral</option>
+            </select>
+            <button onclick="loadGoal()">Recommend</button>
+          </div>
+          <div id="goal-results" style="margin-top:10px;"></div>
+        </div>
+      </div>
+
+      <details style="margin-top: 14px;">
+        <summary class="muted">Debug JSON</summary>
+        <pre id="out"></pre>
+      </details>
       {% else %}
         <div class="card">
           <p>Not connected yet.</p>
@@ -163,36 +229,14 @@
       {% endif %}
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
-      let webPlayer;
       let vibeTimer = null;
       let lastProgress = 0;
       let lastDuration = 0;
       let lastTick = 0;
-
-      window.onSpotifyWebPlaybackSDKReady = () => {
-        initWebPlayback();
-      };
-
-      async function initWebPlayback() {
-        const tokenRes = await fetch("/spotify/api/token/");
-        const tokenData = await tokenRes.json();
-        if (!tokenData.authenticated) return;
-
-        const token = tokenData.access_token;
-
-        webPlayer = new Spotify.Player({
-          name: "VibeSync Web Player",
-          getOAuthToken: cb => cb(token),
-          volume: 0.5
-        });
-
-        webPlayer.addListener("ready", async ({ device_id }) => {
-          await fetch(`/spotify/api/transfer/?device_id=${device_id}`);
-        });
-
-        webPlayer.connect();
-      }
+      let moodBoardData = [];
+      let moodChart = null;
 
       function fmt(ms) {
         if (!ms && ms !== 0) return "0:00";
@@ -206,14 +250,12 @@
         const bar = document.getElementById("progress-bar");
         const elapsed = document.getElementById("time-elapsed");
         const total = document.getElementById("time-total");
-
         if (!duration) {
           bar.style.width = "0%";
           elapsed.textContent = "0:00";
           total.textContent = "0:00";
           return;
         }
-
         const pct = Math.min(100, Math.max(0, (progress / duration) * 100));
         bar.style.width = `${pct}%`;
         elapsed.textContent = fmt(progress);
@@ -225,26 +267,28 @@
         const now = Date.now();
         const elapsed = now - lastTick;
         const progress = Math.min(lastDuration, lastProgress + elapsed);
-
         updateProgress(progress, lastDuration);
         requestAnimationFrame(animateProgress);
       }
 
       function setGlow(mood) {
         const map = {
-          hype: "rgba(255, 87, 51, 0.5)",
-          menacing: "rgba(180, 0, 0, 0.5)",
-          sad: "rgba(59, 130, 246, 0.45)",
-          chill: "rgba(16, 185, 129, 0.45)",
-          romantic: "rgba(236, 72, 153, 0.45)",
-          neutral: "rgba(56, 189, 248, 0.35)",
-          unknown: "rgba(56, 189, 248, 0.35)",
+          hype: { glow: "rgba(255, 87, 51, 0.5)", bg1:"#301018", bg2:"#0b0f1a", pulse:"1.2s" },
+          menacing: { glow: "rgba(180, 0, 0, 0.5)", bg1:"#2a0505", bg2:"#0b0f1a", pulse:"1.4s" },
+          sad: { glow: "rgba(59, 130, 246, 0.45)", bg1:"#0f1d38", bg2:"#0b0f1a", pulse:"2.6s" },
+          chill: { glow: "rgba(16, 185, 129, 0.45)", bg1:"#0c1f1a", bg2:"#0b0f1a", pulse:"3s" },
+          romantic: { glow: "rgba(236, 72, 153, 0.45)", bg1:"#2a1020", bg2:"#0b0f1a", pulse:"2.2s" },
+          neutral: { glow: "rgba(56, 189, 248, 0.35)", bg1:"#182034", bg2:"#0b0f1a", pulse:"2.2s" },
+          unknown: { glow: "rgba(56, 189, 248, 0.35)", bg1:"#182034", bg2:"#0b0f1a", pulse:"2.2s" },
         };
-
         const key = mood.toLowerCase();
-        document.documentElement.style.setProperty("--glow", map[key] || map.neutral);
+        const cfg = map[key] || map.neutral;
+        document.documentElement.style.setProperty("--glow", cfg.glow);
+        document.documentElement.style.setProperty("--bg1", cfg.bg1);
+        document.documentElement.style.setProperty("--bg2", cfg.bg2);
+        document.documentElement.style.setProperty("--pulse-speed", cfg.pulse);
         document.getElementById("glow").style.background =
-          `radial-gradient(circle, ${map[key] || map.neutral}, transparent 70%)`;
+          `radial-gradient(circle, ${cfg.glow}, transparent 70%)`;
       }
 
       async function checkVibe() {
@@ -263,12 +307,11 @@
 
         const track = data.track || {};
         const mood = data.mood || "unknown";
+        const selectedMood = document.getElementById("moodSelect").value;
+        const finalMood = (mood === "unknown") ? selectedMood : mood;
 
-        const statusEl = document.getElementById("status");
-        const trackEl = document.getElementById("track");
-
-        statusEl.innerHTML = `<span class="pill">${mood.toUpperCase()}</span>`;
-        trackEl.innerHTML = `
+        document.getElementById("status").innerHTML = `<span class="pill">${finalMood.toUpperCase()}</span>`;
+        document.getElementById("track").innerHTML = `
           <img class="art" src="${track.image || ""}" alt="album art" />
           <div>
             <div style="font-size: 18px; font-weight: 600;">${track.name || "Unknown Track"}</div>
@@ -277,14 +320,7 @@
           </div>
         `;
 
-        statusEl.classList.remove("pulse");
-        trackEl.classList.remove("pulse");
-        void statusEl.offsetWidth;
-        void trackEl.offsetWidth;
-        statusEl.classList.add("pulse");
-        trackEl.classList.add("pulse");
-
-        setGlow(mood);
+        setGlow(finalMood);
 
         lastProgress = track.progress_ms || 0;
         lastDuration = track.duration_ms || 0;
@@ -292,16 +328,22 @@
         updateProgress(lastProgress, lastDuration);
       }
 
-      async function play() {
-        await fetch("/spotify/api/play/");
-      }
+      async function play() { await fetch("/spotify/api/play/"); }
+      async function pause() { await fetch("/spotify/api/pause/"); }
+      async function previous() { await fetch("/spotify/api/previous/"); }
+      async function nextTrack() { await fetch("/spotify/api/next/"); }
+      async function setVolume(v) { await fetch(`/spotify/api/volume/?v=${v}`); }
 
-      async function pause() {
-        await fetch("/spotify/api/pause/");
-      }
+      async function queueTrack() {
+        const input = document.getElementById("queueInput").value.trim();
+        if (!input) return;
 
-      async function setVolume(v) {
-        await fetch(`/spotify/api/volume/?v=${v}`);
+        let uri = input;
+        if (input.includes("open.spotify.com/track/")) {
+          const id = input.split("track/")[1].split("?")[0];
+          uri = `spotify:track:${id}`;
+        }
+        await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(uri)}`);
       }
 
       async function addMood(target) {
@@ -309,10 +351,136 @@
         let url = "/spotify/api/mood/add-app/";
         if (target === "spotify") url = "/spotify/api/mood/add-spotify/";
         if (target === "both") url = "/spotify/api/mood/add-both/";
-
         const res = await fetch(`${url}?mood=${encodeURIComponent(mood)}`);
         const data = await res.json();
         document.getElementById("out").textContent = JSON.stringify(data, null, 2);
+        loadMoodBoard();
+        loadHistory();
+        loadAnalytics();
+      }
+
+      async function removeFromApp(mood, trackId) {
+        const res = await fetch(`/spotify/api/mood/remove-app/?mood=${encodeURIComponent(mood)}&track_id=${trackId}`);
+        const data = await res.json();
+        document.getElementById("out").textContent = JSON.stringify(data, null, 2);
+        loadMoodBoard();
+      }
+
+      async function removeFromSpotify(mood, trackUrl) {
+        const uri = trackUrl.replace("https://open.spotify.com/track/", "spotify:track:");
+        const res = await fetch(`/spotify/api/mood/remove-spotify/?mood=${encodeURIComponent(mood)}&track_uri=${encodeURIComponent(uri)}`);
+        const data = await res.json();
+        document.getElementById("out").textContent = JSON.stringify(data, null, 2);
+      }
+
+      async function loadMoodBoard() {
+        const res = await fetch("/spotify/api/mood/board/");
+        const data = await res.json();
+        moodBoardData = data.moods || [];
+        renderMoodBoard();
+      }
+
+      function renderMoodBoard() {
+        const board = document.getElementById("mood-board");
+        if (!moodBoardData.length) {
+          board.innerHTML = `<p class="muted">No mood entries yet.</p>`;
+          return;
+        }
+        board.innerHTML = moodBoardData.map(m => `
+          <div style="margin-bottom:16px;">
+            <div style="font-weight:600; margin-bottom:6px;">${m.name}</div>
+            <div style="display:flex; gap:12px; flex-wrap:wrap;">
+              ${m.entries.map(e => `
+                <div class="mood-entry">
+                  <img src="${e.image || ""}" alt="">
+                  <div>
+                    <div style="font-size:14px;font-weight:600;">${e.track_name}</div>
+                    <div class="muted" style="font-size:12px;">${e.artists}</div>
+                    ${e.spotify_url ? `<a class="muted" style="font-size:12px;" href="${e.spotify_url}" target="_blank">Open</a>` : ""}
+                    <div style="margin-top:6px;">
+                      <button class="secondary" onclick="removeFromApp('${m.name}', '${e.track_id || ""}')">Remove (App)</button>
+                      ${e.spotify_url ? `<button class="secondary" onclick="removeFromSpotify('${m.name}', '${e.spotify_url}')">Remove (Spotify)</button>` : ""}
+                    </div>
+                  </div>
+                </div>
+              `).join("")}
+            </div>
+          </div>
+        `).join("");
+      }
+
+      async function loadHistory() {
+        const res = await fetch("/spotify/api/history/");
+        const data = await res.json();
+        const history = document.getElementById("history");
+        if (!data.history || data.history.length === 0) {
+          history.innerHTML = `<p class="muted">No history yet.</p>`;
+          return;
+        }
+        history.innerHTML = data.history.map(e => `
+          <div class="mood-entry" style="margin-bottom:10px;">
+            <img src="${e.image || ""}" alt="">
+            <div>
+              <div style="font-size:14px;font-weight:600;">${e.track_name}</div>
+              <div class="muted" style="font-size:12px;">${e.artists}</div>
+              ${e.spotify_url ? `<a class="muted" style="font-size:12px;" href="${e.spotify_url}" target="_blank">Open</a>` : ""}
+            </div>
+          </div>
+        `).join("");
+      }
+
+      async function loadAnalytics() {
+        const res = await fetch("/spotify/api/analytics/");
+        const data = await res.json();
+
+        const moods = data.moods || [];
+        const artists = data.artists || [];
+        const topArtists = document.getElementById("topArtists");
+
+        if (!moods.length) {
+          topArtists.textContent = "No data yet.";
+          return;
+        }
+
+        const labels = moods.map(m => m.mood__name);
+        const counts = moods.map(m => m.count);
+
+        if (moodChart) moodChart.destroy();
+        const ctx = document.getElementById("moodChart");
+        moodChart = new Chart(ctx, {
+          type: "doughnut",
+          data: {
+            labels,
+            datasets: [{ data: counts, backgroundColor: ["#38bdf8","#f97316","#22c55e","#e879f9","#f43f5e","#facc15"] }]
+          },
+          options: { plugins: { legend: { labels: { color: "#cbd5e1" } } } }
+        });
+
+        topArtists.textContent =
+          artists.slice(0,5).map(a => `${a.artists} (${a.count})`).join(", ") || "No data yet.";
+      }
+
+      async function loadGoal() {
+        const goal = document.getElementById("goalSelect").value;
+        const res = await fetch(`/spotify/api/goal/?goal=${encodeURIComponent(goal)}`);
+        const data = await res.json();
+        const wrap = document.getElementById("goal-results");
+
+        if (!data.tracks || data.tracks.length === 0) {
+          wrap.innerHTML = `<p class="muted">No tracks saved for this mood yet.</p>`;
+          return;
+        }
+
+        wrap.innerHTML = data.tracks.map(t => `
+          <div class="mood-entry" style="margin-bottom:10px;">
+            <img src="${t.image || ""}" alt="">
+            <div>
+              <div style="font-size:14px;font-weight:600;">${t.track_name}</div>
+              <div class="muted" style="font-size:12px;">${t.artists}</div>
+              ${t.spotify_url ? `<a class="muted" style="font-size:12px;" href="${t.spotify_url}" target="_blank">Open</a>` : ""}
+            </div>
+          </div>
+        `).join("");
       }
 
       function startAutoRefresh() {
@@ -322,9 +490,10 @@
       }
 
       checkVibe();
+      loadMoodBoard();
+      loadHistory();
+      loadAnalytics();
       startAutoRefresh();
     </script>
-
-    <script src="https://sdk.scdn.co/spotify-player.js"></script>
   </body>
 </html>
