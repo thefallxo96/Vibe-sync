@@ -112,6 +112,22 @@
       }
       .section-title { margin: 0 0 10px; font-size: 16px; color: #cbd5e1; }
       .mini { font-size: 12px; color: var(--muted); }
+
+      #mood-board {
+        max-height: 420px;
+        overflow-y: auto;
+        padding-right: 6px;
+      }
+
+      .collapse-btn {
+        background: #1c2740;
+        color: #cbd5e1;
+        border: 1px solid #2b3348;
+        font-size: 12px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        margin-right: 6px;
+      }
     </style>
   </head>
   <body>
@@ -178,6 +194,11 @@
 
         <div class="stack">
           <div class="card">
+            <div class="section-title">Up Next</div>
+            <div id="up-next"></div>
+          </div>
+
+          <div class="card">
             <div class="section-title">Mood Board</div>
             <div class="row" style="margin-bottom:10px;">
               <input id="searchInput" type="text" placeholder="Search songs…" oninput="renderMoodBoard()" />
@@ -186,6 +207,10 @@
                 <option value="oldest">Oldest</option>
                 <option value="az">A → Z</option>
                 <option value="za">Z → A</option>
+              </select>
+              <select id="viewSelect" onchange="renderMoodBoard()">
+                <option value="moods">Moods First</option>
+                <option value="songs">Songs First</option>
               </select>
             </div>
             <div id="mood-board"></div>
@@ -244,6 +269,23 @@
       let moodBoardData = [];
       let moodChart = null;
       let lastQueuedFor = null;
+      let activeMoodPlayback = null;
+
+      let recMode = false;
+      let recList = [];
+      let recIndex = 0;
+      let lastTrackId = null;
+      let lastRecFetchAt = 0;
+      let queuedUris = new Set();
+      let recInFlight = false;
+      let queueInFlight = false;
+
+      const REC_MIN_INTERVAL_MS = 6000;
+      const REC_QUEUE_MIN = 4;
+      const REC_QUEUE_ADD = 6;
+      const REC_BUFFER_LOOKAHEAD = 8;
+
+      const collapsedMoods = new Set();
 
       const intensityEl = document.getElementById("moodIntensity");
       const intensityLabel = document.getElementById("moodIntensityLabel");
@@ -329,25 +371,81 @@
           `radial-gradient(circle, ${cfg.glow}, transparent 70%)`;
       }
 
-      async function autoQueueRecommendations(mood) {
-        if (!deviceId) return;
-        const intensity = document.getElementById("moodIntensity")?.value || 50;
-        const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}`);
-        const data = await res.json();
-        if (!data.ok || !data.tracks) return;
+      function renderUpNext() {
+        const up = document.getElementById("up-next");
+        if (!recList.length) {
+          up.innerHTML = `<p class="muted">No recommendations yet.</p>`;
+          return;
+        }
+        const slice = recList.slice(recIndex + 1, recIndex + 6);
+        if (!slice.length) {
+          up.innerHTML = `<p class="muted">No upcoming tracks.</p>`;
+          return;
+        }
+        up.innerHTML = slice.map(t => `
+          <div class="mood-entry" style="margin-bottom:8px;">
+            <img src="${t.image || ""}" alt="">
+            <div>
+              <div style="font-size:13px;font-weight:600;">${t.name}</div>
+              <div class="muted" style="font-size:12px;">${(t.artists || []).join(", ")}</div>
+              <button class="secondary" style="margin-top:6px;" onclick="playUri('${t.spotify_url || ""}')">Play</button>
+            </div>
+          </div>
+        `).join("");
+      }
 
-        for (const t of data.tracks.slice(0, 3)) {
+      async function refreshRecommendations(force = false) {
+        const now = Date.now();
+        if (recInFlight) return false;
+        if (!force && now - lastRecFetchAt < REC_MIN_INTERVAL_MS) return true;
+        recInFlight = true;
+        lastRecFetchAt = now;
+
+        const mood = document.getElementById("moodSelect").value;
+        const intensity = document.getElementById("moodIntensity")?.value || 50;
+
+        const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}&limit=30`);
+        const data = await res.json();
+        recInFlight = false;
+        if (!data.ok || !data.tracks?.length) return false;
+
+        recList = data.tracks;
+        recIndex = 0;
+        renderUpNext();
+        return true;
+      }
+
+      async function queueRecBuffer() {
+        if (!deviceId || !recList.length) return;
+        if (queueInFlight) return;
+
+        queueInFlight = true;
+
+        const remaining = recList.length - (recIndex + 1);
+        if (remaining < REC_QUEUE_MIN) {
+          await refreshRecommendations(true);
+        }
+
+        const toQueue = recList.slice(recIndex + 1, recIndex + 1 + REC_QUEUE_ADD + REC_BUFFER_LOOKAHEAD);
+        for (const t of toQueue) {
+          if (!t?.uri) continue;
+          if (queuedUris.has(t.uri)) continue;
+          queuedUris.add(t.uri);
           await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(t.uri)}&device_id=${deviceId || ""}`);
         }
+
+        renderUpNext();
+        queueInFlight = false;
       }
 
       function maybeAutoQueue(track, mood) {
-        if (!track || !track.id) return;
+        if (!track || !track.id || !track.duration_ms) return;
         if (lastQueuedFor === track.id) return;
+
         const remaining = (track.duration_ms || 0) - (track.progress_ms || 0);
-        if (remaining < 3000) {
+        if (remaining > 0 && remaining < 4000) {
           lastQueuedFor = track.id;
-          autoQueueRecommendations(mood);
+          queueRecBuffer();
         }
       }
 
@@ -389,7 +487,18 @@
         lastTick = Date.now();
         updateProgress(lastProgress, lastDuration);
 
-        maybeAutoQueue(track, finalMood);
+        if (track.id && track.id !== lastTrackId) {
+          lastTrackId = track.id;
+
+          const idx = recList.findIndex(r => r.id === track.id);
+          if (idx >= 0) recIndex = idx;
+
+          if (!recMode) {
+            refreshRecommendations(false);
+          }
+        }
+
+        maybeAutoQueue(track, activeMoodPlayback || finalMood);
       }
 
       async function play() { await fetch(`/spotify/api/play/?device_id=${deviceId || ""}`); }
@@ -409,53 +518,74 @@
         await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
       }
 
-      let recList = [];
-let recIndex = 0;
+      async function queueNowAndPlay() {
+        if (!deviceId) return;
+        const ok = await refreshRecommendations(true);
+        if (!ok || !recList.length) return;
 
-async function refreshRecommendations() {
-  const mood = document.getElementById("moodSelect").value;
-  const intensity = document.getElementById("moodIntensity")?.value || 50;
+        recMode = true;
+        recIndex = 0;
+        const first = recList[0];
+        await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(first.uri)}&device_id=${deviceId || ""}`);
+        queuedUris.clear();
+        await queueRecBuffer();
+      }
 
-  const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}`);
-  const data = await res.json();
-  if (!data.ok || !data.tracks?.length) return false;
+      async function nextRecommendation() {
+        if (!deviceId || !recList.length) return;
 
-  recList = data.tracks;
-  recIndex = 0;
-  return true;
-}
+        recMode = true;
+        recIndex = (recIndex + 1) % recList.length;
+        const next = recList[recIndex];
+        if (!next) return;
 
-async function queueNowAndPlay() {
-  if (!deviceId) return;
+        await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(next.uri)}&device_id=${deviceId || ""}`);
+        await queueRecBuffer();
+      }
 
-  const ok = await refreshRecommendations();
-  if (!ok || !recList.length) return;
-
-  const first = recList[0];
-  await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(first.uri)}&device_id=${deviceId || ""}`);
-}
-
-async function nextRecommendation() {
-  if (!deviceId) return;
-
-  if (!recList.length || recIndex >= recList.length - 1) {
-    const ok = await refreshRecommendations();
-    if (!ok || !recList.length) return;
-  } else {
-    recIndex++;
-  }
-
-  const next = recList[recIndex];
-  if (!next) return;
-
-  await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(next.uri)}&device_id=${deviceId || ""}`);
-}
-
-
-      async function playUri(url) {
+      async function playUri(url, moodName = null) {
         if (!url) return;
         const uri = url.replace("https://open.spotify.com/track/", "spotify:track:");
         await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
+
+        const idx = recList.findIndex(r => r.spotify_url === url);
+        if (idx >= 0) recIndex = idx;
+
+        renderUpNext();
+
+        if (moodName) {
+          document.getElementById("moodSelect").value = moodName;
+          setGlow(moodName);
+          activeMoodPlayback = moodName;
+        }
+      }
+
+      async function playMoodPlaylist(moodName) {
+        recMode = false;
+        queuedUris.clear();
+
+        const moodData = moodBoardData.find(m => m.name === moodName);
+        if (!moodData || !moodData.entries.length) return;
+
+        document.getElementById("moodSelect").value = moodName;
+        setGlow(moodName);
+        activeMoodPlayback = moodName;
+
+        const first = moodData.entries[0];
+        if (first.spotify_url) {
+          await playUri(first.spotify_url, moodName);
+        }
+
+        for (const e of moodData.entries.slice(1)) {
+          if (!e.spotify_url) continue;
+          const uri = e.spotify_url.replace("https://open.spotify.com/track/", "spotify:track:");
+          if (queuedUris.has(uri)) continue;
+          queuedUris.add(uri);
+          await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
+        }
+
+        await refreshRecommendations(true);
+        await queueRecBuffer();
       }
 
       async function addMood(target) {
@@ -492,10 +622,17 @@ async function nextRecommendation() {
         renderMoodBoard();
       }
 
+      function toggleMoodCollapse(name) {
+        if (collapsedMoods.has(name)) collapsedMoods.delete(name);
+        else collapsedMoods.add(name);
+        renderMoodBoard();
+      }
+
       function renderMoodBoard() {
         const board = document.getElementById("mood-board");
         const search = (document.getElementById("searchInput")?.value || "").toLowerCase();
-        const sort = document.getElementById("sortSelect")?.value || "newest";
+        const sort = (document.getElementById("sortSelect")?.value || "newest");
+        const view = (document.getElementById("viewSelect")?.value || "moods");
 
         let moods = JSON.parse(JSON.stringify(moodBoardData));
         if (search) {
@@ -512,33 +649,70 @@ async function nextRecommendation() {
         else if (sort === "za") moods.forEach(m => m.entries.sort((a,b) => b.track_name.localeCompare(a.track_name)));
         else if (sort === "oldest") moods.forEach(m => m.entries.reverse());
 
+        if (view === "songs") {
+          const flat = moods.flatMap(m => m.entries.map(e => ({...e, mood: m.name})));
+          if (!flat.length) {
+            board.innerHTML = `<p class="muted">No mood entries yet.</p>`;
+            return;
+          }
+          board.innerHTML = flat.map(e => `
+            <div class="mood-entry" style="margin-bottom:10px;">
+              <img src="${e.image || ""}" alt="">
+              <div>
+                <div style="font-size:14px;font-weight:600;">${e.track_name}</div>
+                <div class="muted" style="font-size:12px;">${e.artists}</div>
+                <div class="muted" style="font-size:12px;">Mood: ${e.mood}</div>
+                ${e.spotify_url ? `<a class="muted" style="font-size:12px;" href="${e.spotify_url}" target="_blank">Open</a>` : ""}
+                <div style="margin-top:6px;">
+                  <button class="secondary" onclick="playUri('${e.spotify_url || ""}', '${e.mood}')">Play</button>
+                  <button class="secondary" onclick="removeFromApp('${e.mood}', '${e.track_id || ""}')">Remove (App)</button>
+                  ${e.spotify_url ? `<button class="secondary" onclick="removeFromSpotify('${e.mood}', '${e.spotify_url}')">Remove (Spotify)</button>` : ""}
+                </div>
+              </div>
+            </div>
+          `).join("");
+          return;
+        }
+
         if (!moods.length) {
           board.innerHTML = `<p class="muted">No mood entries yet.</p>`;
           return;
         }
 
-        board.innerHTML = moods.map(m => `
-          <div style="margin-bottom:16px;">
-            <div style="font-weight:600; margin-bottom:6px;">${m.name}</div>
-            <div style="display:flex; gap:12px; flex-wrap:wrap;">
-              ${m.entries.length === 0 ? `<span class="muted">No songs yet.</span>` : m.entries.map(e => `
-                <div class="mood-entry">
-                  <img src="${e.image || ""}" alt="">
-                  <div>
-                    <div style="font-size:14px;font-weight:600;">${e.track_name}</div>
-                    <div class="muted" style="font-size:12px;">${e.artists}</div>
-                    ${e.spotify_url ? `<a class="muted" style="font-size:12px;" href="${e.spotify_url}" target="_blank">Open</a>` : ""}
-                    <div style="margin-top:6px;">
-                      <button class="secondary" onclick="playUri('${e.spotify_url || ""}')">Play</button>
-                      <button class="secondary" onclick="removeFromApp('${m.name}', '${e.track_id || ""}')">Remove (App)</button>
-                      ${e.spotify_url ? `<button class="secondary" onclick="removeFromSpotify('${m.name}', '${e.spotify_url}')">Remove (Spotify)</button>` : ""}
+        board.innerHTML = moods.map(m => {
+          const collapsed = collapsedMoods.has(m.name);
+          const arrow = collapsed ? "▼" : "▲";
+          return `
+            <div style="margin-bottom:16px;">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                <div style="font-weight:600;">${m.name}</div>
+                <div>
+                  <button class="collapse-btn" onclick="toggleMoodCollapse('${m.name}')">${arrow}</button>
+                  <button class="secondary" onclick="playMoodPlaylist('${m.name}')">Play Mood</button>
+                </div>
+              </div>
+              ${collapsed ? "" : `
+              <div style="display:flex; gap:12px; flex-wrap:wrap;">
+                ${m.entries.length === 0 ? `<span class="muted">No songs yet.</span>` : m.entries.map(e => `
+                  <div class="mood-entry">
+                    <img src="${e.image || ""}" alt="">
+                    <div>
+                      <div style="font-size:14px;font-weight:600;">${e.track_name}</div>
+                      <div class="muted" style="font-size:12px;">${e.artists}</div>
+                      ${e.spotify_url ? `<a class="muted" style="font-size:12px;" href="${e.spotify_url}" target="_blank">Open</a>` : ""}
+                      <div style="margin-top:6px;">
+                        <button class="secondary" onclick="playUri('${e.spotify_url || ""}', '${m.name}')">Play</button>
+                        <button class="secondary" onclick="removeFromApp('${m.name}', '${e.track_id || ""}')">Remove (App)</button>
+                        ${e.spotify_url ? `<button class="secondary" onclick="removeFromSpotify('${m.name}', '${e.spotify_url}')">Remove (Spotify)</button>` : ""}
+                      </div>
                     </div>
                   </div>
-                </div>
-              `).join("")}
+                `).join("")}
+              </div>
+              `}
             </div>
-          </div>
-        `).join("");
+          `;
+        }).join("");
       }
 
       async function loadHistory() {

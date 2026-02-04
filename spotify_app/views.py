@@ -1,5 +1,6 @@
 import secrets
 import time
+import random
 from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.urls import reverse
@@ -25,10 +26,16 @@ from .services.spotify_client import (
     spotify_remove_track,
     spotify_playlist_has_track,
     spotify_play_uri,
+    spotify_play_uris,
     spotify_next,
     spotify_previous,
     spotify_queue_track,
     spotify_get_recommendations,
+    spotify_get_available_genre_seeds,
+    spotify_get_audio_features_bulk,
+    spotify_get_recently_played,
+    spotify_get_top_tracks,
+    spotify_get_top_artists,
     API_BASE,
 )
 
@@ -207,16 +214,143 @@ def _recommend_params_for_mood(mood: str, intensity: int = 50) -> dict:
     t = max(0, min(100, intensity)) / 100.0
     m = (mood or "neutral").lower()
     if m == "hype":
-        return {"limit": 10, "target_energy": 0.7 + 0.3*t, "target_danceability": 0.6 + 0.3*t, "target_valence": 0.6 + 0.2*t}
+        return {
+            "limit": 25,
+            "target_energy": 0.65 + 0.35 * t,
+            "min_energy": 0.45 + 0.25 * t,
+            "target_danceability": 0.55 + 0.35 * t,
+            "min_danceability": 0.40 + 0.20 * t,
+            "target_valence": 0.55 + 0.25 * t,
+            "min_valence": 0.35 + 0.15 * t,
+            "target_tempo": 115 + 35 * t,
+            "min_popularity": int(35 + 35 * t),
+        }
     if m == "menacing":
-        return {"limit": 10, "target_energy": 0.6 + 0.4*t, "target_valence": 0.3 - 0.2*t, "target_loudness": -10 + 5*t}
+        return {
+            "limit": 25,
+            "target_energy": 0.55 + 0.45 * t,
+            "min_energy": 0.35 + 0.30 * t,
+            "target_valence": 0.35 - 0.25 * t,
+            "max_valence": 0.55 - 0.20 * t,
+            "target_loudness": -12 + 7 * t,
+            "target_tempo": 95 + 40 * t,
+            "min_popularity": int(20 + 30 * t),
+        }
     if m == "sad":
-        return {"limit": 10, "target_energy": 0.4 - 0.2*t, "target_valence": 0.3 - 0.2*t, "target_acousticness": 0.4 + 0.4*t}
+        return {
+            "limit": 25,
+            "target_energy": 0.45 - 0.25 * t,
+            "max_energy": 0.65 - 0.20 * t,
+            "target_valence": 0.35 - 0.25 * t,
+            "max_valence": 0.55 - 0.15 * t,
+            "target_acousticness": 0.35 + 0.5 * t,
+            "min_acousticness": 0.20 + 0.30 * t,
+            "target_tempo": 110 - 30 * t,
+            "max_popularity": int(85 - 25 * t),
+        }
     if m == "chill":
-        return {"limit": 10, "target_energy": 0.5 - 0.3*t, "target_valence": 0.5 - 0.1*t, "target_tempo": 115 - 25*t}
+        return {
+            "limit": 25,
+            "target_energy": 0.55 - 0.35 * t,
+            "max_energy": 0.70 - 0.25 * t,
+            "target_valence": 0.55 - 0.15 * t,
+            "target_tempo": 120 - 35 * t,
+            "target_acousticness": 0.3 + 0.35 * t,
+            "max_popularity": int(90 - 20 * t),
+        }
     if m == "romantic":
-        return {"limit": 10, "target_energy": 0.55 - 0.2*t, "target_valence": 0.65 + 0.2*t, "target_acousticness": 0.3 + 0.3*t}
-    return {"limit": 10, "target_energy": 0.55, "target_valence": 0.5}
+        return {
+            "limit": 25,
+            "target_energy": 0.6 - 0.25 * t,
+            "target_valence": 0.6 + 0.25 * t,
+            "min_valence": 0.45 + 0.20 * t,
+            "target_acousticness": 0.25 + 0.45 * t,
+            "target_tempo": 105 - 20 * t,
+            "min_popularity": int(25 + 30 * t),
+        }
+    return {
+        "limit": 25,
+        "target_energy": 0.55,
+        "target_valence": 0.5,
+        "target_danceability": 0.5,
+        "min_popularity": 20,
+        "max_popularity": 95,
+    }
+
+
+def _weighted_genres_for_mood(mood: str, intensity: int) -> list[str]:
+    t = max(0, min(100, intensity)) / 100.0
+    m = (mood or "neutral").lower()
+    low = {
+        "hype": ["pop", "dance", "hip-hop", "electronic", "house"],
+        "menacing": ["metal", "industrial", "rock", "techno", "dubstep"],
+        "sad": ["acoustic", "piano", "soul", "folk", "ambient"],
+        "chill": ["chill", "ambient", "jazz", "downtempo", "acoustic"],
+        "romantic": ["r-n-b", "soul", "latin", "pop", "acoustic"],
+        "neutral": ["pop", "indie", "alternative", "electronic", "rock"],
+    }
+    high = {
+        "hype": ["edm", "trap", "dance", "electronic", "house"],
+        "menacing": ["metal", "industrial", "techno", "dubstep", "rock"],
+        "sad": ["acoustic", "piano", "singer-songwriter", "ambient", "soul"],
+        "chill": ["ambient", "chill", "downtempo", "jazz", "acoustic"],
+        "romantic": ["r-n-b", "latin", "soul", "pop", "acoustic"],
+        "neutral": ["pop", "indie", "alternative", "electronic", "rock"],
+    }
+    base = low.get(m, low["neutral"])
+    boost = high.get(m, high["neutral"])
+    count_boost = max(1, min(4, round(t * 4)))
+    picked = boost[:count_boost] + base[: (5 - count_boost)]
+    seen = set()
+    out = []
+    for g in picked:
+        if g not in seen:
+            out.append(g)
+            seen.add(g)
+    return out[:5]
+
+
+def _top_artist_genres(token: str, available: list[str]) -> list[str]:
+    top_artists = spotify_get_top_artists(token, time_range="medium_term", limit=20).get("items", [])
+    counts: dict[str, int] = {}
+    for a in top_artists:
+        for g in a.get("genres", []):
+            if g not in available:
+                continue
+            counts[g] = counts.get(g, 0) + 1
+    ranked = sorted(counts.items(), key=lambda x: x[1], reverse=True)
+    return [g for g, _ in ranked][:5]
+
+
+def _score_track(features: dict, params: dict) -> float:
+    if not features:
+        return 999.0
+    score = 0.0
+    for key, target in params.items():
+        if not key.startswith("target_"):
+            continue
+        feat_key = key.replace("target_", "")
+        val = features.get(feat_key)
+        if val is None:
+            continue
+        score += abs(float(val) - float(target))
+    return score
+
+
+def _dedupe_by_artist(tracks: list[dict], max_items: int) -> list[dict]:
+    seen = set()
+    out = []
+    for t in tracks:
+        artists = t.get("artists") or []
+        artist_id = (artists[0].get("id") if artists else None)
+        if artist_id and artist_id in seen:
+            continue
+        if artist_id:
+            seen.add(artist_id)
+        out.append(t)
+        if len(out) >= max_items:
+            break
+    return out
 
 
 def api_recommend(request):
@@ -226,41 +360,138 @@ def api_recommend(request):
 
     mood = request.GET.get("mood", "neutral")
     intensity = int(request.GET.get("intensity", 50))
+    limit = max(10, min(50, int(request.GET.get("limit", 25))))
+    params = _recommend_params_for_mood(mood, intensity)
+    weighted_genres = _weighted_genres_for_mood(mood, intensity)
 
-    mood_queries = {
-        "hype": ["club", "party", "energy", "dance"],
-        "menacing": ["dark", "hard", "aggressive"],
-        "sad": ["sad", "heartbreak", "acoustic"],
-        "chill": ["chill", "lofi", "ambient"],
-        "romantic": ["romance", "love", "slow"],
-        "neutral": ["indie", "pop", "alt"],
-    }
+    try:
+        me = spotify_get_me(token)
+        market = me.get("country", "US")
+        params["market"] = market
 
-    queries = mood_queries.get(mood.lower(), mood_queries["neutral"])
-    me = spotify_get_me(token)
-    market = me.get("country", "US")
+        available = spotify_get_available_genre_seeds(token).get("genres", [])
+        mood_genres = [g for g in weighted_genres if g in available] if available else weighted_genres[:]
+        personal_genres = _top_artist_genres(token, available) if available else []
+        if not mood_genres:
+            mood_genres = weighted_genres[:]
 
-    # pick query based on intensity
-    idx = min(len(queries) - 1, int(intensity / 30))
-    query = queries[idx]
+        random.shuffle(mood_genres)
+        random.shuffle(personal_genres)
 
-    results = spotify_search_tracks(token, query=query, market=market, limit=20)
-    items = results.get("tracks", {}).get("items", [])
+        t = max(0, min(100, intensity)) / 100.0
+        mood_slots = max(2, min(4, round(2 + 2 * t)))
+        personal_slots = max(1, 5 - mood_slots)
+        seed_genres = (mood_genres[:mood_slots] + personal_genres[:personal_slots])[:5]
 
-    tracks = [
-        {
-            "id": t.get("id"),
-            "name": t.get("name"),
-            "uri": t.get("uri"),
-            "artists": [a.get("name") for a in t.get("artists", [])],
-            "image": ((t.get("album") or {}).get("images") or [{}])[0].get("url"),
-            "spotify_url": (t.get("external_urls") or {}).get("spotify"),
-        }
-        for t in items if t.get("id")
-    ]
+        recent = spotify_get_recently_played(token, limit=20)
+        recent_items = recent.get("items", [])
+        recent_tracks = [i.get("track") for i in recent_items if i.get("track")]
+        recent_track_ids = [t.get("id") for t in recent_tracks if t and t.get("id")]
+        recent_artist_ids = []
+        for t in recent_tracks:
+            recent_artist_ids.extend([a.get("id") for a in (t.get("artists") or []) if a.get("id")])
 
-    return JsonResponse({"ok": True, "mood": mood, "tracks": tracks, "source": "search"})
+        seed_tracks = []
+        seed_artists = []
+        seed_source = "recent"
 
+        if len(recent_track_ids) >= 2:
+            seed_tracks = recent_track_ids[:2]
+            seed_artists = recent_artist_ids[:2]
+        else:
+            top_tracks = spotify_get_top_tracks(token, time_range="short_term", limit=20).get("items", [])
+            top_artists = spotify_get_top_artists(token, time_range="short_term", limit=20).get("items", [])
+            seed_source = "top"
+            seed_tracks = [t.get("id") for t in top_tracks if t.get("id")][:2]
+            seed_artists = [a.get("id") for a in top_artists if a.get("id")][:2]
+
+        seeds_count = len(seed_tracks) + len(seed_artists)
+        seed_genres = seed_genres[: max(1, 5 - seeds_count)]
+
+        rec = spotify_get_recommendations(
+            token,
+            seed_tracks=seed_tracks,
+            seed_artists=seed_artists,
+            seed_genres=seed_genres,
+            params={**params, "limit": 50},
+        )
+        rec_tracks = rec.get("tracks", [])
+
+        recent_set = set(recent_track_ids)
+        filtered_tracks = [t for t in rec_tracks if t.get("id") not in recent_set]
+        if filtered_tracks:
+            rec_tracks = filtered_tracks
+
+        rec_track_ids = [t.get("id") for t in rec_tracks if t.get("id")]
+        features_bulk = spotify_get_audio_features_bulk(token, rec_track_ids) if rec_track_ids else {}
+        features_map = {f.get("id"): f for f in features_bulk.get("audio_features", []) if f}
+
+        if features_map:
+            ranked = []
+            for t in rec_tracks:
+                f = features_map.get(t.get("id"))
+                score = _score_track(f, params)
+                jitter = random.uniform(0.0, 0.10 + 0.25 * (intensity / 100.0))
+                ranked.append((score + jitter, t))
+            ranked.sort(key=lambda x: x[0])
+            ranked_tracks = [t for _, t in ranked]
+        else:
+            ranked_tracks = rec_tracks
+        diverse = _dedupe_by_artist(ranked_tracks, limit)
+
+        why = (
+            f"Matched mood {mood.title()} (intensity {intensity}). "
+            f"Seeds: {seed_source} tracks/artists. "
+            f"Genres: {', '.join(seed_genres)}. "
+            f"Ranked by audio features."
+        )
+        tracks = [
+            {
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "uri": t.get("uri"),
+                "artists": [a.get("name") for a in t.get("artists", [])],
+                "image": ((t.get("album") or {}).get("images") or [{}])[0].get("url"),
+                "spotify_url": (t.get("external_urls") or {}).get("spotify"),
+                "why": why,
+            }
+            for t in diverse
+            if t.get("id")
+        ]
+        return JsonResponse({"ok": True, "mood": mood, "tracks": tracks, "source": "recommendations"})
+    except Exception:
+        top_tracks = spotify_get_top_tracks(token, time_range="medium_term", limit=30).get("items", [])
+        track_ids = [t.get("id") for t in top_tracks if t.get("id")]
+        features_bulk = spotify_get_audio_features_bulk(token, track_ids) if track_ids else {}
+        features_map = {f.get("id"): f for f in features_bulk.get("audio_features", []) if f}
+
+        if features_map:
+            ranked = []
+            for t in top_tracks:
+                f = features_map.get(t.get("id"))
+                score = _score_track(f, params)
+                ranked.append((score, t))
+            ranked.sort(key=lambda x: x[0])
+            ranked_tracks = [t for _, t in ranked]
+        else:
+            ranked_tracks = top_tracks
+        diverse = _dedupe_by_artist(ranked_tracks, 15)
+
+        why = f"Ranked your top tracks by mood features for {mood.title()} (intensity {intensity})."
+        tracks = [
+            {
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "uri": t.get("uri"),
+                "artists": [a.get("name") for a in t.get("artists", [])],
+                "image": ((t.get("album") or {}).get("images") or [{}])[0].get("url"),
+                "spotify_url": (t.get("external_urls") or {}).get("spotify"),
+                "why": why,
+            }
+            for t in diverse
+            if t.get("id")
+        ]
+        return JsonResponse({"ok": True, "mood": mood, "tracks": tracks, "source": "top_tracks_fallback"})
 
 
 # --- PLAYBACK + QUEUE ---
@@ -328,6 +559,22 @@ def api_play_uri(request):
     if not device_id:
         return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
     spotify_play_uri(token, uri, device_id=device_id)
+    return JsonResponse({"ok": True})
+
+def api_play_uris(request):
+    token = _get_access_token(request)
+    if not token:
+        return JsonResponse({"authenticated": False}, status=401)
+    uris = request.GET.get("uris")
+    if not uris:
+        return JsonResponse({"error": "Missing uris"}, status=400)
+    uri_list = [u for u in uris.split(",") if u]
+    if not uri_list:
+        return JsonResponse({"error": "No valid uris"}, status=400)
+    device_id = request.GET.get("device_id") or _get_device_id(token)
+    if not device_id:
+        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    spotify_play_uris(token, uri_list, device_id=device_id)
     return JsonResponse({"ok": True})
 
 def api_volume(request):

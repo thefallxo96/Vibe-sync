@@ -8,7 +8,7 @@ API_BASE = "https://api.spotify.com/v1"
 
 SCOPES = (
     "streaming user-read-playback-state user-modify-playback-state user-read-currently-playing "
-    "playlist-modify-private playlist-modify-public"
+    "playlist-modify-private playlist-modify-public user-read-recently-played user-top-read"
 )
 
 def spotify_get(url: str, access_token: str) -> requests.Response:
@@ -158,6 +158,13 @@ def spotify_play_uri(access_token: str, uri: str, device_id: str | None = None) 
     r = spotify_put(url, access_token, json={"uris": [uri]})
     r.raise_for_status()
 
+def spotify_play_uris(access_token: str, uris: list[str], device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/play"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_put(url, access_token, json={"uris": uris})
+    r.raise_for_status()
+
 def spotify_get_me(access_token: str) -> dict:
     r = spotify_get(f"{API_BASE}/me", access_token)
     r.raise_for_status()
@@ -224,6 +231,33 @@ def spotify_get_audio_features_bulk(access_token: str, track_ids: list[str]) -> 
     ids = ",".join(track_ids)
     url = f"{API_BASE}/audio-features?ids={ids}"
     r = spotify_get(url, access_token)
+    if r.status_code == 403:
+        return {"audio_features": []}
     r.raise_for_status()
     return r.json()
 
+def spotify_get_recently_played(access_token: str, limit: int = 20) -> dict:
+    url = f"{API_BASE}/me/player/recently-played?limit={limit}"
+    r = spotify_get(url, access_token)
+    r.raise_for_status()
+    return r.json()
+
+def spotify_get_top_tracks(access_token: str, time_range: str = "short_term", limit: int = 20) -> dict:
+    url = f"{API_BASE}/me/top/tracks?time_range={time_range}&limit={limit}"
+    r = spotify_get(url, access_token)
+    r.raise_for_status()
+    return r.json()
+
+def spotify_get_top_artists(access_token: str, time_range: str = "short_term", limit: int = 20) -> dict:
+    url = f"{API_BASE}/me/top/artists?time_range={time_range}&limit={limit}"
+    r = spotify_get(url, access_token)
+    r.raise_for_status()
+    return r.json()
+
+def spotify_get_available_genre_seeds(access_token: str) -> dict:
+    url = f"{API_BASE}/recommendations/available-genre-seeds"
+    r = spotify_get(url, access_token)
+    if r.status_code == 404:
+        return {"genres": []}
+    r.raise_for_status()
+    return r.json()

@@ -13,7 +13,6 @@ urlpatterns = [
 
     path("api/now-playing/", views.api_now_playing, name="spotify_api_now_playing"),
     path("api/vibe/", views.api_vibe, name="spotify_api_vibe"),
-    path("api/recommend/", views.api_recommend, name="spotify_api_recommend"),
 
     path("api/play/", views.api_play, name="spotify_api_play"),
     path("api/pause/", views.api_pause, name="spotify_api_pause"),
@@ -21,6 +20,7 @@ urlpatterns = [
     path("api/previous/", views.api_previous, name="spotify_api_previous"),
     path("api/queue/", views.api_queue, name="spotify_api_queue"),
     path("api/play-uri/", views.api_play_uri, name="spotify_api_play_uri"),
+    path("api/play-uris/", views.api_play_uris, name="spotify_api_play_uris"),
     path("api/volume/", views.api_volume, name="spotify_api_volume"),
     path("api/devices/", views.api_devices, name="spotify_api_devices"),
 
@@ -34,4 +34,5 @@ urlpatterns = [
     path("api/history/", views.api_history, name="spotify_api_history"),
     path("api/analytics/", views.api_analytics, name="spotify_api_analytics"),
     path("api/goal/", views.api_goal_mood, name="spotify_api_goal"),
+    path("api/recommend/", views.api_recommend, name="spotify_api_recommend"),
 ]
