@@ -4,13 +4,6 @@ from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.urls import reverse
 from django.db import models
-from .services.spotify_client import (
-    # ...
-    spotify_next,
-    spotify_previous,
-    spotify_queue_track,
-)
-
 
 from .models import Mood, MoodEntry, TrackHistory
 from .services.spotify_client import (
@@ -31,6 +24,11 @@ from .services.spotify_client import (
     spotify_add_tracks,
     spotify_remove_track,
     spotify_playlist_has_track,
+    spotify_play_uri,
+    spotify_next,
+    spotify_previous,
+    spotify_queue_track,
+    spotify_get_recommendations,
     API_BASE,
 )
 
@@ -50,7 +48,6 @@ def spotify_login(request):
     if not state:
         state = secrets.token_urlsafe(16)
         request.session["spotify_oauth_state"] = state
-
     request.session.modified = True
     request.session.save()
     return redirect(get_login_url(state))
@@ -63,15 +60,12 @@ def spotify_callback(request):
 
     if not code:
         return JsonResponse({"error": "Missing authorization code"}, status=400)
-
     if not returned_state or not session_state:
         return JsonResponse({"error": "OAuth state missing. Use one tab + only 127.0.0.1."}, status=400)
-
     if returned_state != session_state:
         return JsonResponse({"error": "Invalid OAuth state. Start over from /spotify/ and click once."}, status=400)
 
     token_data = exchange_code_for_token(code)
-
     request.session["spotify_access_token"] = token_data["access_token"]
     request.session["spotify_refresh_token"] = token_data.get("refresh_token")
     request.session["spotify_expires_at"] = token_data["expires_at"]
@@ -154,31 +148,27 @@ def api_transfer(request):
     spotify_transfer_playback(token, device_id, play=True)
     return JsonResponse({"ok": True, "device_id": device_id})
 
+
 def api_me(request):
     token = _get_access_token(request)
     if not token:
         return JsonResponse({"authenticated": False}, status=401)
-
     r = spotify_get(f"{API_BASE}/me", token)
     if r.status_code != 200:
         return JsonResponse({"error": "Failed to fetch profile", "details": r.text}, status=400)
-
     return JsonResponse({"authenticated": True, "profile": r.json()})
-
 
 
 def api_now_playing(request):
     token = _get_access_token(request)
     if not token:
         return JsonResponse({"authenticated": False}, status=401)
-
     payload = get_now_playing(token)
     if payload is None:
         player = get_player_state(token)
         return JsonResponse({"playing": False, "message": "Nothing is playing right now.", "player_state": player})
 
     item = payload.get("item") or {}
-
     track = {
         "id": item.get("id"),
         "name": item.get("name"),
@@ -191,7 +181,6 @@ def api_now_playing(request):
         "duration_ms": item.get("duration_ms"),
         "uri": item.get("uri"),
     }
-
     return JsonResponse({"playing": True, "track": track})
 
 
@@ -202,7 +191,6 @@ def _mood_from_features(f: dict) -> str:
     energy = float(f.get("energy") or 0.0)
     dance = float(f.get("danceability") or 0.0)
     tempo = float(f.get("tempo") or 0.0)
-
     if energy >= 0.75 and dance >= 0.65 and valence >= 0.55:
         return "hype"
     if energy >= 0.70 and valence <= 0.35:
@@ -215,89 +203,137 @@ def _mood_from_features(f: dict) -> str:
         return "romantic"
     return "neutral"
 
-def api_next(request):
+
+def _recommend_params_for_mood(mood: str, intensity: int = 50) -> dict:
+    t = max(0, min(100, intensity)) / 100.0
+    m = (mood or "neutral").lower()
+    if m == "hype":
+        return {"limit": 10, "target_energy": 0.7 + 0.3*t, "target_danceability": 0.6 + 0.3*t, "target_valence": 0.6 + 0.2*t}
+    if m == "menacing":
+        return {"limit": 10, "target_energy": 0.6 + 0.4*t, "target_valence": 0.3 - 0.2*t, "target_loudness": -10 + 5*t}
+    if m == "sad":
+        return {"limit": 10, "target_energy": 0.4 - 0.2*t, "target_valence": 0.3 - 0.2*t, "target_acousticness": 0.4 + 0.4*t}
+    if m == "chill":
+        return {"limit": 10, "target_energy": 0.5 - 0.3*t, "target_valence": 0.5 - 0.1*t, "target_tempo": 115 - 25*t}
+    if m == "romantic":
+        return {"limit": 10, "target_energy": 0.55 - 0.2*t, "target_valence": 0.65 + 0.2*t, "target_acousticness": 0.3 + 0.3*t}
+    return {"limit": 10, "target_energy": 0.55, "target_valence": 0.5}
+
+
+def api_recommend(request):
     token = _get_access_token(request)
     if not token:
         return JsonResponse({"authenticated": False}, status=401)
 
-    device_id = request.GET.get("device_id") or _get_device_id(token)
-    if not device_id:
-        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    mood = request.GET.get("mood", "neutral")
+    intensity = int(request.GET.get("intensity", 50))
 
-    spotify_next(token, device_id=device_id)
-    return JsonResponse({"ok": True, "action": "next", "device_id": device_id})
+    payload = get_now_playing(token)
+    if not payload:
+        return JsonResponse({"ok": False, "error": "Nothing playing"}, status=400)
 
+    item = payload.get("item") or {}
+    track_id = item.get("id")
+    artist_ids = [a.get("id") for a in item.get("artists", []) if a.get("id")]
 
-def api_previous(request):
-    token = _get_access_token(request)
-    if not token:
-        return JsonResponse({"authenticated": False}, status=401)
+    if not track_id:
+        return JsonResponse({"ok": False, "error": "No track id"}, status=400)
 
-    device_id = request.GET.get("device_id") or _get_device_id(token)
-    if not device_id:
-        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    params = _recommend_params_for_mood(mood, intensity)
+    rec = spotify_get_recommendations(token, [track_id], artist_ids[:2], params)
 
-    spotify_previous(token, device_id=device_id)
-    return JsonResponse({"ok": True, "action": "previous", "device_id": device_id})
+    tracks = []
+    for t in rec.get("tracks", []):
+        tracks.append({
+            "id": t.get("id"),
+            "name": t.get("name"),
+            "uri": t.get("uri"),
+            "artists": [a.get("name") for a in t.get("artists", [])],
+            "image": ((t.get("album") or {}).get("images") or [{}])[0].get("url"),
+            "spotify_url": (t.get("external_urls") or {}).get("spotify"),
+        })
 
-
-def api_queue(request):
-    token = _get_access_token(request)
-    if not token:
-        return JsonResponse({"authenticated": False}, status=401)
-
-    track_uri = request.GET.get("uri")
-    if not track_uri:
-        return JsonResponse({"ok": False, "error": "Missing uri"}, status=400)
-
-    device_id = request.GET.get("device_id") or _get_device_id(token)
-    if not device_id:
-        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
-
-    spotify_queue_track(token, track_uri, device_id=device_id)
-    return JsonResponse({"ok": True, "action": "queue", "uri": track_uri, "device_id": device_id})
+    return JsonResponse({"ok": True, "mood": mood, "tracks": tracks})
 
 
+# --- PLAYBACK + QUEUE ---
 def api_play(request):
     token = _get_access_token(request)
     if not token:
         return JsonResponse({"authenticated": False}, status=401)
-
     device_id = request.GET.get("device_id") or _get_device_id(token)
     if not device_id:
         return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
-
     spotify_play(token, device_id=device_id)
-    return JsonResponse({"ok": True, "action": "play", "device_id": device_id})
-
+    return JsonResponse({"ok": True})
 
 def api_pause(request):
     token = _get_access_token(request)
     if not token:
         return JsonResponse({"authenticated": False}, status=401)
-
     device_id = request.GET.get("device_id") or _get_device_id(token)
     if not device_id:
         return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
-
     spotify_pause(token, device_id=device_id)
-    return JsonResponse({"ok": True, "action": "pause", "device_id": device_id})
+    return JsonResponse({"ok": True})
 
+def api_next(request):
+    token = _get_access_token(request)
+    if not token:
+        return JsonResponse({"authenticated": False}, status=401)
+    device_id = request.GET.get("device_id") or _get_device_id(token)
+    if not device_id:
+        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    spotify_next(token, device_id=device_id)
+    return JsonResponse({"ok": True})
+
+def api_previous(request):
+    token = _get_access_token(request)
+    if not token:
+        return JsonResponse({"authenticated": False}, status=401)
+    device_id = request.GET.get("device_id") or _get_device_id(token)
+    if not device_id:
+        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    spotify_previous(token, device_id=device_id)
+    return JsonResponse({"ok": True})
+
+def api_queue(request):
+    token = _get_access_token(request)
+    if not token:
+        return JsonResponse({"authenticated": False}, status=401)
+    uri = request.GET.get("uri")
+    if not uri:
+        return JsonResponse({"error": "Missing uri"}, status=400)
+    device_id = request.GET.get("device_id") or _get_device_id(token)
+    if not device_id:
+        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    spotify_queue_track(token, uri, device_id=device_id)
+    return JsonResponse({"ok": True})
+
+def api_play_uri(request):
+    token = _get_access_token(request)
+    if not token:
+        return JsonResponse({"authenticated": False}, status=401)
+    uri = request.GET.get("uri")
+    if not uri:
+        return JsonResponse({"error": "Missing uri"}, status=400)
+    device_id = request.GET.get("device_id") or _get_device_id(token)
+    if not device_id:
+        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    spotify_play_uri(token, uri, device_id=device_id)
+    return JsonResponse({"ok": True})
 
 def api_volume(request):
     token = _get_access_token(request)
     if not token:
         return JsonResponse({"authenticated": False}, status=401)
-
     v = int(request.GET.get("v", 50))
     v = max(0, min(100, v))
-
     device_id = request.GET.get("device_id") or _get_device_id(token)
     if not device_id:
         return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
-
     spotify_set_volume(token, v, device_id=device_id)
-    return JsonResponse({"ok": True, "volume": v, "device_id": device_id})
+    return JsonResponse({"ok": True, "volume": v})
 
 
 def api_devices(request):
@@ -307,6 +343,7 @@ def api_devices(request):
     return JsonResponse({"ok": True, "devices": spotify_get_devices(token)})
 
 
+# --- MOOD BOARDS / PLAYLISTS ---
 def api_add_to_app_mood(request):
     token = _get_access_token(request)
     if not token:
@@ -322,7 +359,6 @@ def api_add_to_app_mood(request):
 
     item = payload.get("item") or {}
     track_id = item.get("id")
-
     mood = _get_or_create_mood(mood_name)
 
     if MoodEntry.objects.filter(mood=mood, track_id=track_id).exists():
@@ -337,7 +373,6 @@ def api_add_to_app_mood(request):
         image=((item.get("album") or {}).get("images") or [{}])[0].get("url") or "",
         spotify_url=(item.get("external_urls") or {}).get("spotify") or "",
     )
-
     return JsonResponse({"ok": True, "mood": mood.name, "entry_id": entry.id})
 
 
@@ -463,14 +498,12 @@ def api_analytics(request):
         .annotate(count=models.Count("id"))
         .order_by("-count")
     )
-
     artist_counts = (
         MoodEntry.objects.values("mood__name", "artists")
         .order_by()
         .annotate(count=models.Count("id"))
         .order_by("-count")[:50]
     )
-
     return JsonResponse({"moods": list(mood_counts), "artists": list(artist_counts)})
 
 
@@ -491,7 +524,7 @@ def api_goal_mood(request):
                 "spotify_url": e.spotify_url,
             }
             for e in entries
-        ],
+        ]
     })
 
 

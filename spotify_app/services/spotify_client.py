@@ -7,45 +7,27 @@ TOKEN_URL = "https://accounts.spotify.com/api/token"
 API_BASE = "https://api.spotify.com/v1"
 
 SCOPES = (
-    "streaming user-read-playback-state user-modify-playback-state "
-    "user-read-currently-playing playlist-modify-private playlist-modify-public"
+    "streaming user-read-playback-state user-modify-playback-state user-read-currently-playing "
+    "playlist-modify-private playlist-modify-public"
 )
 
-
-def _require_settings():
-    missing = []
-    if not settings.SPOTIFY_CLIENT_ID:
-        missing.append("SPOTIFY_CLIENT_ID")
-    if not settings.SPOTIFY_CLIENT_SECRET:
-        missing.append("SPOTIFY_CLIENT_SECRET")
-    if not settings.SPOTIFY_REDIRECT_URI:
-        missing.append("SPOTIFY_REDIRECT_URI")
-    if missing:
-        raise RuntimeError(f"Missing settings: {', '.join(missing)}")
-
-
-def _headers(token: str):
-    return {"Authorization": f"Bearer {token}"}
-
-
 def spotify_get(url: str, access_token: str) -> requests.Response:
-    return requests.get(url, headers=_headers(access_token), timeout=15)
-
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return requests.get(url, headers=headers, timeout=15)
 
 def spotify_put(url: str, access_token: str, json: dict | None = None) -> requests.Response:
-    return requests.put(url, headers=_headers(access_token), json=json, timeout=15)
-
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return requests.put(url, headers=headers, json=json, timeout=15)
 
 def spotify_post(url: str, access_token: str, json: dict | None = None) -> requests.Response:
-    return requests.post(url, headers=_headers(access_token), json=json, timeout=15)
-
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return requests.post(url, headers=headers, json=json, timeout=15)
 
 def spotify_delete(url: str, access_token: str, json: dict | None = None) -> requests.Response:
-    return requests.delete(url, headers=_headers(access_token), json=json, timeout=15)
-
+    headers = {"Authorization": f"Bearer {access_token}"}
+    return requests.delete(url, headers=headers, json=json, timeout=15)
 
 def get_login_url(state: str) -> str:
-    _require_settings()
     params = {
         "response_type": "code",
         "client_id": settings.SPOTIFY_CLIENT_ID,
@@ -56,9 +38,7 @@ def get_login_url(state: str) -> str:
     }
     return requests.Request("GET", AUTH_URL, params=params).prepare().url
 
-
 def exchange_code_for_token(code: str) -> dict:
-    _require_settings()
     data = {
         "grant_type": "authorization_code",
         "code": code,
@@ -72,9 +52,7 @@ def exchange_code_for_token(code: str) -> dict:
     payload["expires_at"] = int(time.time()) + payload.get("expires_in", 3600)
     return payload
 
-
 def refresh_access_token(refresh_token: str) -> dict:
-    _require_settings()
     data = {
         "grant_type": "refresh_token",
         "refresh_token": refresh_token,
@@ -87,14 +65,12 @@ def refresh_access_token(refresh_token: str) -> dict:
     payload["expires_at"] = int(time.time()) + payload.get("expires_in", 3600)
     return payload
 
-
 def get_now_playing(access_token: str) -> dict | None:
     r = spotify_get(f"{API_BASE}/me/player/currently-playing", access_token)
     if r.status_code == 204:
         return None
     r.raise_for_status()
     return r.json()
-
 
 def get_player_state(access_token: str) -> dict | None:
     r = spotify_get(f"{API_BASE}/me/player", access_token)
@@ -103,7 +79,6 @@ def get_player_state(access_token: str) -> dict | None:
     r.raise_for_status()
     return r.json()
 
-
 def get_audio_features(track_id: str, access_token: str) -> dict | None:
     r = spotify_get(f"{API_BASE}/audio-features/{track_id}", access_token)
     if r.status_code == 403:
@@ -111,18 +86,15 @@ def get_audio_features(track_id: str, access_token: str) -> dict | None:
     r.raise_for_status()
     return r.json()
 
-
 def spotify_get_devices(access_token: str) -> dict:
     r = spotify_get(f"{API_BASE}/me/player/devices", access_token)
     r.raise_for_status()
     return r.json()
 
-
 def spotify_transfer_playback(access_token: str, device_id: str, play: bool = True) -> None:
     body = {"device_ids": [device_id], "play": play}
     r = spotify_put(f"{API_BASE}/me/player", access_token, json=body)
     r.raise_for_status()
-
 
 def spotify_play(access_token: str, device_id: str | None = None) -> None:
     url = f"{API_BASE}/me/player/play"
@@ -131,14 +103,12 @@ def spotify_play(access_token: str, device_id: str | None = None) -> None:
     r = spotify_put(url, access_token)
     r.raise_for_status()
 
-
 def spotify_pause(access_token: str, device_id: str | None = None) -> None:
     url = f"{API_BASE}/me/player/pause"
     if device_id:
         url += f"?device_id={device_id}"
     r = spotify_put(url, access_token)
     r.raise_for_status()
-
 
 def spotify_set_volume(access_token: str, volume_percent: int, device_id: str | None = None) -> None:
     url = f"{API_BASE}/me/player/volume?volume_percent={volume_percent}"
@@ -147,27 +117,51 @@ def spotify_set_volume(access_token: str, volume_percent: int, device_id: str | 
     r = spotify_put(url, access_token)
     r.raise_for_status()
 
+def spotify_next(access_token: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/next"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_post(url, access_token)
+    r.raise_for_status()
+
+def spotify_previous(access_token: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/previous"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_post(url, access_token)
+    r.raise_for_status()
+
+def spotify_queue_track(access_token: str, uri: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/queue?uri={uri}"
+    if device_id:
+        url += f"&device_id={device_id}"
+    r = spotify_post(url, access_token)
+    r.raise_for_status()
+
+def spotify_play_uri(access_token: str, uri: str, device_id: str | None = None) -> None:
+    url = f"{API_BASE}/me/player/play"
+    if device_id:
+        url += f"?device_id={device_id}"
+    r = spotify_put(url, access_token, json={"uris": [uri]})
+    r.raise_for_status()
 
 def spotify_get_me(access_token: str) -> dict:
     r = spotify_get(f"{API_BASE}/me", access_token)
     r.raise_for_status()
     return r.json()
 
-
 def spotify_create_playlist(access_token: str, user_id: str, name: str) -> dict:
     url = f"{API_BASE}/users/{user_id}/playlists"
     body = {"name": name, "public": False, "description": "Created by VibeSync"}
-    r = spotify_post(url, access_token, json=body)
+    r = requests.post(url, headers={"Authorization": f"Bearer {access_token}"}, json=body, timeout=15)
     r.raise_for_status()
     return r.json()
-
 
 def spotify_add_tracks(access_token: str, playlist_id: str, track_uri: str) -> None:
     url = f"{API_BASE}/playlists/{playlist_id}/tracks"
     body = {"uris": [track_uri]}
-    r = spotify_post(url, access_token, json=body)
+    r = requests.post(url, headers={"Authorization": f"Bearer {access_token}"}, json=body, timeout=15)
     r.raise_for_status()
-
 
 def spotify_playlist_has_track(access_token: str, playlist_id: str, track_id: str) -> bool:
     offset = 0
@@ -183,37 +177,22 @@ def spotify_playlist_has_track(access_token: str, playlist_id: str, track_id: st
         offset += 100
     return False
 
-
 def spotify_remove_track(access_token: str, playlist_id: str, track_uri: str) -> None:
     url = f"{API_BASE}/playlists/{playlist_id}/tracks"
     body = {"tracks": [{"uri": track_uri}]}
     r = spotify_delete(url, access_token, json=body)
     r.raise_for_status()
 
-def spotify_post(url: str, access_token: str, json: dict | None = None) -> requests.Response:
-    headers = {"Authorization": f"Bearer {access_token}"}
-    return requests.post(url, headers=headers, json=json, timeout=15)
+def spotify_get_recommendations(access_token: str, seed_tracks: list[str], seed_artists: list[str], params: dict) -> dict:
+    seeds = []
+    if seed_tracks:
+        seeds.append(f"seed_tracks={','.join(seed_tracks)}")
+    if seed_artists:
+        seeds.append(f"seed_artists={','.join(seed_artists)}")
 
+    query = "&".join(seeds + [f"{k}={v}" for k, v in params.items()])
+    url = f"{API_BASE}/recommendations?{query}"
 
-def spotify_next(access_token: str, device_id: str | None = None) -> None:
-    url = f"{API_BASE}/me/player/next"
-    if device_id:
-        url += f"?device_id={device_id}"
-    r = spotify_post(url, access_token)
+    r = spotify_get(url, access_token)
     r.raise_for_status()
-
-
-def spotify_previous(access_token: str, device_id: str | None = None) -> None:
-    url = f"{API_BASE}/me/player/previous"
-    if device_id:
-        url += f"?device_id={device_id}"
-    r = spotify_post(url, access_token)
-    r.raise_for_status()
-
-
-def spotify_queue_track(access_token: str, track_uri: str, device_id: str | None = None) -> None:
-    url = f"{API_BASE}/me/player/queue?uri={track_uri}"
-    if device_id:
-        url += f"&device_id={device_id}"
-    r = spotify_post(url, access_token)
-    r.raise_for_status()
+    return r.json()

@@ -65,13 +65,14 @@
       }
 
       button {
-        margin-right: 8px;
-        padding: 10px 14px;
-        border-radius: 10px;
+        margin-right: 6px;
+        padding: 8px 11px;
+        border-radius: 8px;
         border: none;
         background: var(--accent);
         color: #001018;
         font-weight: 600;
+        font-size: 13px;
         cursor: pointer;
       }
       button.secondary { background: #2b3348; color: var(--text); }
@@ -100,11 +101,7 @@
       .art { width: 120px; height: 120px; border-radius: 12px; object-fit: cover; background: #0d1222; }
       pre { background: #0d1222; color: #cbd5e1; padding: 12px; border-radius: 10px; overflow-x: auto; }
       #progress-bar { box-shadow: 0 0 12px var(--glow), 0 0 24px var(--glow); }
-      .pulse { animation: pulse 0.5s ease-out; }
-      @keyframes pulse {
-        0% { transform: scale(0.995); opacity: 0.7; }
-        100% { transform: scale(1); opacity: 1; }
-      }
+
       .mood-entry {
         display:flex; gap:10px; align-items:center;
         background: var(--panel-2);
@@ -165,6 +162,9 @@
               <option>Menacing</option>
               <option>Neutral</option>
             </select>
+            <span class="muted">Intensity:</span>
+            <input id="moodIntensity" type="range" min="0" max="100" value="50" />
+            <span id="moodIntensityLabel" class="muted">50</span>
             <button onclick="addMood('app')">App</button>
             <button onclick="addMood('spotify')" class="secondary">Spotify</button>
             <button onclick="addMood('both')" class="secondary">Both</button>
@@ -231,12 +231,45 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
+      let deviceId = null;
       let vibeTimer = null;
       let lastProgress = 0;
       let lastDuration = 0;
       let lastTick = 0;
       let moodBoardData = [];
       let moodChart = null;
+      let lastQueuedFor = null;
+
+      const intensityEl = document.getElementById("moodIntensity");
+      const intensityLabel = document.getElementById("moodIntensityLabel");
+      if (intensityEl) {
+        intensityEl.addEventListener("input", () => {
+          intensityLabel.textContent = intensityEl.value;
+        });
+      }
+
+      window.onSpotifyWebPlaybackSDKReady = () => { initWebPlayback(); };
+
+      async function initWebPlayback() {
+        const tokenRes = await fetch("/spotify/api/token/");
+        const tokenData = await tokenRes.json();
+        if (!tokenData.authenticated) return;
+
+        const token = tokenData.access_token;
+
+        const player = new Spotify.Player({
+          name: "VibeSync Web Player",
+          getOAuthToken: cb => cb(token),
+          volume: 0.5
+        });
+
+        player.addListener("ready", async ({ device_id }) => {
+          deviceId = device_id;
+          await fetch(`/spotify/api/transfer/?device_id=${deviceId}`);
+        });
+
+        player.connect();
+      }
 
       function fmt(ms) {
         if (!ms && ms !== 0) return "0:00";
@@ -291,6 +324,28 @@
           `radial-gradient(circle, ${cfg.glow}, transparent 70%)`;
       }
 
+      async function autoQueueRecommendations(mood) {
+        if (!deviceId) return;
+        const intensity = document.getElementById("moodIntensity")?.value || 50;
+        const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}`);
+        const data = await res.json();
+        if (!data.ok || !data.tracks) return;
+
+        for (const t of data.tracks.slice(0, 3)) {
+          await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(t.uri)}&device_id=${deviceId || ""}`);
+        }
+      }
+
+      function maybeAutoQueue(track, mood) {
+        if (!track || !track.id) return;
+        if (lastQueuedFor === track.id) return;
+        const remaining = (track.duration_ms || 0) - (track.progress_ms || 0);
+        if (remaining < 3000) {
+          lastQueuedFor = track.id;
+          autoQueueRecommendations(mood);
+        }
+      }
+
       async function checkVibe() {
         const res = await fetch("/spotify/api/vibe/");
         const data = await res.json();
@@ -310,7 +365,9 @@
         const selectedMood = document.getElementById("moodSelect").value;
         const finalMood = (mood === "unknown") ? selectedMood : mood;
 
-        document.getElementById("status").innerHTML = `<span class="pill">${finalMood.toUpperCase()}</span>`;
+        document.getElementById("status").innerHTML =
+          `<span class="pill">${finalMood.toUpperCase()}</span>`;
+
         document.getElementById("track").innerHTML = `
           <img class="art" src="${track.image || ""}" alt="album art" />
           <div>
@@ -326,24 +383,31 @@
         lastDuration = track.duration_ms || 0;
         lastTick = Date.now();
         updateProgress(lastProgress, lastDuration);
+
+        maybeAutoQueue(track, finalMood);
       }
 
-      async function play() { await fetch("/spotify/api/play/"); }
-      async function pause() { await fetch("/spotify/api/pause/"); }
-      async function previous() { await fetch("/spotify/api/previous/"); }
-      async function nextTrack() { await fetch("/spotify/api/next/"); }
-      async function setVolume(v) { await fetch(`/spotify/api/volume/?v=${v}`); }
+      async function play() { await fetch(`/spotify/api/play/?device_id=${deviceId || ""}`); }
+      async function pause() { await fetch(`/spotify/api/pause/?device_id=${deviceId || ""}`); }
+      async function previous() { await fetch(`/spotify/api/previous/?device_id=${deviceId || ""}`); }
+      async function nextTrack() { await fetch(`/spotify/api/next/?device_id=${deviceId || ""}`); }
+      async function setVolume(v) { await fetch(`/spotify/api/volume/?v=${v}&device_id=${deviceId || ""}`); }
 
       async function queueTrack() {
         const input = document.getElementById("queueInput").value.trim();
         if (!input) return;
-
         let uri = input;
         if (input.includes("open.spotify.com/track/")) {
           const id = input.split("track/")[1].split("?")[0];
           uri = `spotify:track:${id}`;
         }
-        await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(uri)}`);
+        await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
+      }
+
+      async function playUri(url) {
+        if (!url) return;
+        const uri = url.replace("https://open.spotify.com/track/", "spotify:track:");
+        await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
       }
 
       async function addMood(target) {
@@ -382,15 +446,38 @@
 
       function renderMoodBoard() {
         const board = document.getElementById("mood-board");
-        if (!moodBoardData.length) {
+        const search = (document.getElementById("searchInput")?.value || "").toLowerCase();
+        const sort = document.getElementById("sortSelect")?.value || "newest";
+
+        let moods = JSON.parse(JSON.stringify(moodBoardData));
+        if (search) {
+          moods = moods.map(m => ({
+            ...m,
+            entries: m.entries.filter(e =>
+              e.track_name.toLowerCase().includes(search) ||
+              e.artists.toLowerCase().includes(search)
+            )
+          }));
+        }
+
+        if (sort === "az") {
+          moods.forEach(m => m.entries.sort((a,b) => a.track_name.localeCompare(b.track_name)));
+        } else if (sort === "za") {
+          moods.forEach(m => m.entries.sort((a,b) => b.track_name.localeCompare(a.track_name)));
+        } else if (sort === "oldest") {
+          moods.forEach(m => m.entries.reverse());
+        }
+
+        if (!moods.length) {
           board.innerHTML = `<p class="muted">No mood entries yet.</p>`;
           return;
         }
-        board.innerHTML = moodBoardData.map(m => `
+
+        board.innerHTML = moods.map(m => `
           <div style="margin-bottom:16px;">
             <div style="font-weight:600; margin-bottom:6px;">${m.name}</div>
             <div style="display:flex; gap:12px; flex-wrap:wrap;">
-              ${m.entries.map(e => `
+              ${m.entries.length === 0 ? `<span class="muted">No songs yet.</span>` : m.entries.map(e => `
                 <div class="mood-entry">
                   <img src="${e.image || ""}" alt="">
                   <div>
@@ -398,6 +485,7 @@
                     <div class="muted" style="font-size:12px;">${e.artists}</div>
                     ${e.spotify_url ? `<a class="muted" style="font-size:12px;" href="${e.spotify_url}" target="_blank">Open</a>` : ""}
                     <div style="margin-top:6px;">
+                      <button class="secondary" onclick="playUri('${e.spotify_url || ""}')">Play</button>
                       <button class="secondary" onclick="removeFromApp('${m.name}', '${e.track_id || ""}')">Remove (App)</button>
                       ${e.spotify_url ? `<button class="secondary" onclick="removeFromSpotify('${m.name}', '${e.spotify_url}')">Remove (Spotify)</button>` : ""}
                     </div>
@@ -432,7 +520,6 @@
       async function loadAnalytics() {
         const res = await fetch("/spotify/api/analytics/");
         const data = await res.json();
-
         const moods = data.moods || [];
         const artists = data.artists || [];
         const topArtists = document.getElementById("topArtists");
@@ -495,5 +582,7 @@
       loadAnalytics();
       startAutoRefresh();
     </script>
+
+    <script src="https://sdk.scdn.co/spotify-player.js"></script>
   </body>
 </html>
