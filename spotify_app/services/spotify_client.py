@@ -15,6 +15,13 @@ def spotify_get(url: str, access_token: str) -> requests.Response:
     headers = {"Authorization": f"Bearer {access_token}"}
     return requests.get(url, headers=headers, timeout=15)
 
+def spotify_search_tracks(access_token: str, query: str, market: str = "US", limit: int = 20) -> dict:
+    url = f"{API_BASE}/search?q={query}&type=track&limit={limit}&market={market}"
+    r = spotify_get(url, access_token)
+    r.raise_for_status()
+    return r.json()
+
+
 def spotify_get_me(access_token: str) -> dict:
     r = spotify_get(f"{API_BASE}/me", access_token)
     r.raise_for_status()

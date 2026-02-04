@@ -138,12 +138,14 @@
             <button onclick="queueTrack()" class="secondary">Queue</button>
             <button onclick="checkVibe()" class="secondary">Vibe Check</button>
             <button onclick="queueNowAndPlay()" class="secondary">Play Rec Now</button>
-            console.log("deviceId:", deviceId);
-
+            <button onclick="nextRecommendation()" class="secondary">Next Rec</button>
             <a href="/spotify/logout/"><button class="secondary">Logout</button></a>
           </div>
 
           <div id="status" class="muted">Click “Vibe Check” to load current track + mood.</div>
+          <div class="muted" style="margin-top:6px;">
+            Mode: <span class="pill">Vibe‑Only Recommendations</span>
+          </div>
           <div id="track" class="track"></div>
 
           <div id="progress-wrap" style="margin-top: 12px;">
@@ -406,21 +408,47 @@
         }
         await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
       }
-      
-      async function queueNowAndPlay() {
-  if (!deviceId) return;
 
+      let recList = [];
+let recIndex = 0;
+
+async function refreshRecommendations() {
   const mood = document.getElementById("moodSelect").value;
   const intensity = document.getElementById("moodIntensity")?.value || 50;
 
   const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}`);
   const data = await res.json();
-  if (!data.ok || !data.tracks?.length) return;
+  if (!data.ok || !data.tracks?.length) return false;
 
-  const first = data.tracks[0];
+  recList = data.tracks;
+  recIndex = 0;
+  return true;
+}
 
-  // play immediately
+async function queueNowAndPlay() {
+  if (!deviceId) return;
+
+  const ok = await refreshRecommendations();
+  if (!ok || !recList.length) return;
+
+  const first = recList[0];
   await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(first.uri)}&device_id=${deviceId || ""}`);
+}
+
+async function nextRecommendation() {
+  if (!deviceId) return;
+
+  if (!recList.length || recIndex >= recList.length - 1) {
+    const ok = await refreshRecommendations();
+    if (!ok || !recList.length) return;
+  } else {
+    recIndex++;
+  }
+
+  const next = recList[recIndex];
+  if (!next) return;
+
+  await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(next.uri)}&device_id=${deviceId || ""}`);
 }
 
 
@@ -480,13 +508,9 @@
           }));
         }
 
-        if (sort === "az") {
-          moods.forEach(m => m.entries.sort((a,b) => a.track_name.localeCompare(b.track_name)));
-        } else if (sort === "za") {
-          moods.forEach(m => m.entries.sort((a,b) => b.track_name.localeCompare(a.track_name)));
-        } else if (sort === "oldest") {
-          moods.forEach(m => m.entries.reverse());
-        }
+        if (sort === "az") moods.forEach(m => m.entries.sort((a,b) => a.track_name.localeCompare(b.track_name)));
+        else if (sort === "za") moods.forEach(m => m.entries.sort((a,b) => b.track_name.localeCompare(a.track_name)));
+        else if (sort === "oldest") moods.forEach(m => m.entries.reverse());
 
         if (!moods.length) {
           board.innerHTML = `<p class="muted">No mood entries yet.</p>`;
