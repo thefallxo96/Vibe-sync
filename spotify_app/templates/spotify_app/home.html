@@ -137,6 +137,9 @@
             <input id="queueInput" type="text" placeholder="Paste Spotify track URL" style="width: 240px;" />
             <button onclick="queueTrack()" class="secondary">Queue</button>
             <button onclick="checkVibe()" class="secondary">Vibe Check</button>
+            <button onclick="queueNowAndPlay()" class="secondary">Play Rec Now</button>
+            console.log("deviceId:", deviceId);
+
             <a href="/spotify/logout/"><button class="secondary">Logout</button></a>
           </div>
 
@@ -403,6 +406,23 @@
         }
         await fetch(`/spotify/api/queue/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
       }
+      
+      async function queueNowAndPlay() {
+  if (!deviceId) return;
+
+  const mood = document.getElementById("moodSelect").value;
+  const intensity = document.getElementById("moodIntensity")?.value || 50;
+
+  const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}`);
+  const data = await res.json();
+  if (!data.ok || !data.tracks?.length) return;
+
+  const first = data.tracks[0];
+
+  // play immediately
+  await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(first.uri)}&device_id=${deviceId || ""}`);
+}
+
 
       async function playUri(url) {
         if (!url) return;

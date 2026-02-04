@@ -4,6 +4,10 @@ from django.shortcuts import render, redirect
 from django.http import JsonResponse
 from django.urls import reverse
 from django.db import models
+from .services.spotify_client import spotify_get_recommendations
+from .services.spotify_client import spotify_artist_top_tracks, spotify_get_audio_features_bulk
+
+
 
 from .models import Mood, MoodEntry, TrackHistory
 from .services.spotify_client import (
@@ -220,6 +224,22 @@ def _recommend_params_for_mood(mood: str, intensity: int = 50) -> dict:
     return {"limit": 10, "target_energy": 0.55, "target_valence": 0.5}
 
 
+def _score_track(features: dict, params: dict) -> float:
+    if not features:
+        return 999.0
+
+    score = 0.0
+    for key, target in params.items():
+        if not key.startswith("target_"):
+            continue
+        feat_key = key.replace("target_", "")
+        val = features.get(feat_key)
+        if val is None:
+            continue
+        score += abs(float(val) - float(target))
+    return score
+
+
 def api_recommend(request):
     token = _get_access_token(request)
     if not token:
@@ -240,20 +260,70 @@ def api_recommend(request):
         return JsonResponse({"ok": False, "error": "No track id"}, status=400)
 
     params = _recommend_params_for_mood(mood, intensity)
-    rec = spotify_get_recommendations(token, [track_id], artist_ids[:2], params)
 
-    tracks = []
-    for t in rec.get("tracks", []):
-        tracks.append({
+    # Try recommendations first
+    try:
+        me = spotify_get_me(token)
+        market = me.get("country", "US")
+        params["market"] = market
+        rec = spotify_get_recommendations(token, [track_id], artist_ids[:2], params)
+        tracks = [
+            {
+                "id": t.get("id"),
+                "name": t.get("name"),
+                "uri": t.get("uri"),
+                "artists": [a.get("name") for a in t.get("artists", [])],
+                "image": ((t.get("album") or {}).get("images") or [{}])[0].get("url"),
+                "spotify_url": (t.get("external_urls") or {}).get("spotify"),
+            }
+            for t in rec.get("tracks", [])
+        ]
+        return JsonResponse({"ok": True, "mood": mood, "tracks": tracks})
+    except Exception:
+        pass
+
+    # Fallback: use top tracks from the main artist and score by mood
+    if not artist_ids:
+        return JsonResponse({"ok": False, "error": "No artist seeds"}, status=400)
+
+    me = spotify_get_me(token)
+    market = me.get("country", "US")
+
+    top = spotify_artist_top_tracks(token, artist_ids[0], market=market)
+    top_tracks = top.get("tracks", [])
+    track_ids = [t.get("id") for t in top_tracks if t.get("id")]
+
+    if not track_ids:
+        return JsonResponse({"ok": False, "error": "No top tracks found"}, status=400)
+
+    features_bulk = spotify_get_audio_features_bulk(token, track_ids)
+    features_map = {f["id"]: f for f in features_bulk.get("audio_features", []) if f}
+
+    ranked = []
+    for t in top_tracks:
+        f = features_map.get(t.get("id"))
+        score = _score_track(f, params)
+        ranked.append((score, t))
+
+    ranked.sort(key=lambda x: x[0])
+    top_ranked = [t for _, t in ranked[:10]]
+
+    tracks = [
+        {
             "id": t.get("id"),
             "name": t.get("name"),
             "uri": t.get("uri"),
             "artists": [a.get("name") for a in t.get("artists", [])],
             "image": ((t.get("album") or {}).get("images") or [{}])[0].get("url"),
             "spotify_url": (t.get("external_urls") or {}).get("spotify"),
-        })
+        }
+        for t in top_ranked
+    ]
 
-    return JsonResponse({"ok": True, "mood": mood, "tracks": tracks})
+    return JsonResponse({"ok": True, "mood": mood, "tracks": tracks, "fallback": True})
+
+
+
 
 
 # --- PLAYBACK + QUEUE ---

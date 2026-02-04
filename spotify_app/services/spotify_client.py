@@ -15,6 +15,12 @@ def spotify_get(url: str, access_token: str) -> requests.Response:
     headers = {"Authorization": f"Bearer {access_token}"}
     return requests.get(url, headers=headers, timeout=15)
 
+def spotify_get_me(access_token: str) -> dict:
+    r = spotify_get(f"{API_BASE}/me", access_token)
+    r.raise_for_status()
+    return r.json()
+
+
 def spotify_put(url: str, access_token: str, json: dict | None = None) -> requests.Response:
     headers = {"Authorization": f"Bearer {access_token}"}
     return requests.put(url, headers=headers, json=json, timeout=15)
@@ -183,16 +189,34 @@ def spotify_remove_track(access_token: str, playlist_id: str, track_uri: str) ->
     r = spotify_delete(url, access_token, json=body)
     r.raise_for_status()
 
-def spotify_get_recommendations(access_token: str, seed_tracks: list[str], seed_artists: list[str], params: dict) -> dict:
-    seeds = []
+def spotify_get_recommendations(access_token: str, seed_tracks: list[str], seed_artists: list[str], params: dict, seed_genres: list[str] | None = None) -> dict:
+    q = dict(params)
     if seed_tracks:
-        seeds.append(f"seed_tracks={','.join(seed_tracks)}")
+        q["seed_tracks"] = ",".join(seed_tracks)
     if seed_artists:
-        seeds.append(f"seed_artists={','.join(seed_artists)}")
+        q["seed_artists"] = ",".join(seed_artists)
+    if seed_genres:
+        q["seed_genres"] = ",".join(seed_genres)
 
-    query = "&".join(seeds + [f"{k}={v}" for k, v in params.items()])
-    url = f"{API_BASE}/recommendations?{query}"
+    r = requests.get(
+        f"{API_BASE}/recommendations",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params=q,
+        timeout=15,
+    )
+    r.raise_for_status()
+    return r.json()
 
+def spotify_artist_top_tracks(access_token: str, artist_id: str, market: str = "US") -> dict:
+    url = f"{API_BASE}/artists/{artist_id}/top-tracks?market={market}"
     r = spotify_get(url, access_token)
     r.raise_for_status()
     return r.json()
+
+def spotify_get_audio_features_bulk(access_token: str, track_ids: list[str]) -> dict:
+    ids = ",".join(track_ids)
+    url = f"{API_BASE}/audio-features?ids={ids}"
+    r = spotify_get(url, access_token)
+    r.raise_for_status()
+    return r.json()
+
