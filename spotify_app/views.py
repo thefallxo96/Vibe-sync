@@ -364,6 +364,9 @@ def api_recommend(request):
     params = _recommend_params_for_mood(mood, intensity)
     weighted_genres = _weighted_genres_for_mood(mood, intensity)
 
+    current_track = request.GET.get("current_track") or ""
+    current_track = current_track.strip()
+
     try:
         me = spotify_get_me(token)
         market = me.get("country", "US")
@@ -418,6 +421,9 @@ def api_recommend(request):
         rec_tracks = rec.get("tracks", [])
 
         recent_set = set(recent_track_ids)
+        if current_track:
+            recent_set.add(current_track)
+
         filtered_tracks = [t for t in rec_tracks if t.get("id") not in recent_set]
         if filtered_tracks:
             rec_tracks = filtered_tracks
@@ -437,6 +443,8 @@ def api_recommend(request):
             ranked_tracks = [t for _, t in ranked]
         else:
             ranked_tracks = rec_tracks
+
+        random.shuffle(ranked_tracks)
         diverse = _dedupe_by_artist(ranked_tracks, limit)
 
         why = (
@@ -475,6 +483,8 @@ def api_recommend(request):
             ranked_tracks = [t for _, t in ranked]
         else:
             ranked_tracks = top_tracks
+
+        random.shuffle(ranked_tracks)
         diverse = _dedupe_by_artist(ranked_tracks, 15)
 
         why = f"Ranked your top tracks by mood features for {mood.title()} (intensity {intensity})."

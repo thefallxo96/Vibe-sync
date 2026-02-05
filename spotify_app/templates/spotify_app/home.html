@@ -403,8 +403,9 @@
 
         const mood = document.getElementById("moodSelect").value;
         const intensity = document.getElementById("moodIntensity")?.value || 50;
+        const current = lastTrackId || "";
 
-        const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}&limit=30`);
+        const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}&limit=30&current_track=${current}`);
         const data = await res.json();
         recInFlight = false;
         if (!data.ok || !data.tracks?.length) return false;
@@ -489,10 +490,8 @@
 
         if (track.id && track.id !== lastTrackId) {
           lastTrackId = track.id;
-
           const idx = recList.findIndex(r => r.id === track.id);
           if (idx >= 0) recIndex = idx;
-
           if (!recMode) {
             refreshRecommendations(false);
           }
@@ -524,8 +523,8 @@
         if (!ok || !recList.length) return;
 
         recMode = true;
-        recIndex = 0;
-        const first = recList[0];
+        recIndex = Math.floor(Math.random() * recList.length);
+        const first = recList[recIndex];
         await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(first.uri)}&device_id=${deviceId || ""}`);
         queuedUris.clear();
         await queueRecBuffer();
