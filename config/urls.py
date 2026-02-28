@@ -15,9 +15,14 @@ Including another URLconf
     2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
 """
 from django.contrib import admin
+from django.http import HttpResponse
 from django.urls import path, include
 
+def healthz(_request):
+    return HttpResponse("ok")
+
 urlpatterns = [
+    path("healthz/", healthz),
     path("admin/", admin.site.urls),
     path("", include("vibes.urls")),               # your main app home
     path("spotify/", include("spotify_app.urls")), # spotify section

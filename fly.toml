@@ -1,0 +1,36 @@
+# fly.toml app configuration file generated for vibesync on 2026-02-05T08:53:47-05:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'vibesync'
+primary_region = 'ord'
+console_command = '/code/manage.py shell'
+
+[[mounts]]
+  source = "data"
+  destination = "/app/data"
+
+[build]
+
+[env]
+  PORT = '8080'
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ['app']
+
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 1024
+
+[[statics]]
+  guest_path = '/app/staticfiles'
+  url_prefix = '/static/'

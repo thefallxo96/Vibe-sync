@@ -22,6 +22,7 @@ urlpatterns = [
     path("api/play-uri/", views.api_play_uri, name="spotify_api_play_uri"),
     path("api/play-uris/", views.api_play_uris, name="spotify_api_play_uris"),
     path("api/volume/", views.api_volume, name="spotify_api_volume"),
+    path("api/seek/", views.api_seek, name="spotify_api_seek"),
     path("api/devices/", views.api_devices, name="spotify_api_devices"),
 
     path("api/mood/add-app/", views.api_add_to_app_mood, name="spotify_api_add_app"),
@@ -35,4 +36,5 @@ urlpatterns = [
     path("api/analytics/", views.api_analytics, name="spotify_api_analytics"),
     path("api/goal/", views.api_goal_mood, name="spotify_api_goal"),
     path("api/recommend/", views.api_recommend, name="spotify_api_recommend"),
+    path("api/recommend/feedback/", views.api_recommend_feedback, name="spotify_api_recommend_feedback"),
 ]

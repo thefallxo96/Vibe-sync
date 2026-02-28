@@ -128,6 +128,59 @@
         border-radius: 8px;
         margin-right: 6px;
       }
+
+      @media (max-width: 860px) {
+        body { padding: 20px; }
+        .glow { width: 420px; height: 420px; top: -160px; right: -200px; }
+        .container { max-width: 100%; }
+        .grid { grid-template-columns: 1fr; }
+        .card { padding: 16px; }
+        .header { flex-direction: column; align-items: flex-start; }
+        .header h1 { font-size: 24px; }
+        .row { gap: 10px; }
+        .stack { gap: 14px; }
+        .control-bar {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 10px;
+        }
+        .control-bar button,
+        .control-bar input,
+        .control-bar select {
+          width: 100%;
+          margin-right: 0;
+        }
+        .mood-row {
+          display: grid;
+          grid-template-columns: 1fr 1fr;
+          gap: 10px;
+        }
+        .mood-row span,
+        .mood-row button,
+        .mood-row select,
+        .mood-row input[type="range"] {
+          width: 100%;
+        }
+        button { font-size: 12px; padding: 8px 10px; }
+        select, input[type="text"] { width: 100%; margin-right: 0; }
+        input[type="range"] { width: 100%; }
+        #queueInput { width: 100% !important; }
+        .track { flex-direction: column; align-items: flex-start; }
+        .art { width: 100px; height: 100px; }
+        .mood-entry { width: 100%; }
+        #mood-board { max-height: 320px; }
+        details { display: none; }
+      }
+
+      @media (max-width: 480px) {
+        body { padding: 14px; }
+        .card { padding: 14px; }
+        .art { width: 90px; height: 90px; }
+        .section-title { font-size: 14px; }
+        .muted { font-size: 13px; }
+        .control-bar { grid-template-columns: 1fr; }
+        .mood-row { grid-template-columns: 1fr; }
+      }
     </style>
   </head>
   <body>
@@ -144,7 +197,7 @@
       {% if authed %}
       <div class="grid">
         <div class="card">
-          <div class="row" style="margin-bottom: 12px;">
+          <div class="row control-bar" style="margin-bottom: 12px;">
             <button onclick="play()">Play</button>
             <button onclick="pause()" class="secondary">Pause</button>
             <button onclick="previous()" class="secondary">Prev</button>
@@ -152,7 +205,7 @@
             <input type="range" min="0" max="100" value="50" oninput="setVolume(this.value)" />
             <input id="queueInput" type="text" placeholder="Paste Spotify track URL" style="width: 240px;" />
             <button onclick="queueTrack()" class="secondary">Queue</button>
-            <button onclick="checkVibe()" class="secondary">Vibe Check</button>
+            <button onclick="manualVibeCheck()" class="secondary">Vibe Check</button>
             <button onclick="queueNowAndPlay()" class="secondary">Play Rec Now</button>
             <button onclick="nextRecommendation()" class="secondary">Next Rec</button>
             <a href="/spotify/logout/"><button class="secondary">Logout</button></a>
@@ -160,12 +213,19 @@
 
           <div id="status" class="muted">Click “Vibe Check” to load current track + mood.</div>
           <div class="muted" style="margin-top:6px;">
-            Mode: <span class="pill">Vibe‑Only Recommendations</span>
+            Mode:
+            <select id="recModeSelect">
+              <option value="vibe">Vibe‑Only</option>
+              <option value="blend" selected>Vibe + Personal</option>
+              <option value="personal">Personal‑Only</option>
+              <option value="moodboard">Mood Board Seeds</option>
+            </select>
           </div>
           <div id="track" class="track"></div>
 
           <div id="progress-wrap" style="margin-top: 12px;">
-            <div style="height: 6px; background:#0d1222; border-radius: 999px; overflow:hidden;">
+            <input id="progress-slider" type="range" min="0" max="100" value="0" style="width:100%;" />
+            <div style="height: 6px; background:#0d1222; border-radius: 999px; overflow:hidden; margin-top:6px;">
               <div id="progress-bar" style="height: 6px; width: 0%; background: #38bdf8;"></div>
             </div>
             <div class="muted" style="margin-top:6px;">
@@ -173,10 +233,11 @@
             </div>
           </div>
 
-          <div class="row" style="margin-top: 14px;">
+          <div class="row mood-row" style="margin-top: 14px;">
             <span class="muted">Add to mood:</span>
             <select id="moodSelect">
               <option>Hype</option>
+              <option>Perreo</option>
               <option>Chill</option>
               <option>Sad</option>
               <option>Romantic</option>
@@ -235,6 +296,7 @@
           <div class="row">
             <select id="goalSelect">
               <option>Hype</option>
+              <option>Perreo</option>
               <option>Chill</option>
               <option>Sad</option>
               <option>Romantic</option>
@@ -279,6 +341,10 @@
       let queuedUris = new Set();
       let recInFlight = false;
       let queueInFlight = false;
+      let lockedMood = null;
+      let lastVibeCheckManual = false;
+      let feedbackLikes = new Set();
+      let feedbackDislikes = new Set();
 
       const REC_MIN_INTERVAL_MS = 6000;
       const REC_QUEUE_MIN = 4;
@@ -289,13 +355,66 @@
 
       const intensityEl = document.getElementById("moodIntensity");
       const intensityLabel = document.getElementById("moodIntensityLabel");
+      const moodSelectEl = document.getElementById("moodSelect");
+      const recModeSelectEl = document.getElementById("recModeSelect");
       if (intensityEl) {
         intensityEl.addEventListener("input", () => {
           intensityLabel.textContent = intensityEl.value;
         });
       }
+      if (moodSelectEl) {
+        moodSelectEl.addEventListener("change", () => {
+          lockedMood = moodSelectEl.value.toLowerCase();
+          recMode = false;
+          recList = [];
+          recIndex = 0;
+          queuedUris.clear();
+          refreshRecommendations(true);
+        });
+      }
+      if (recModeSelectEl) {
+        recModeSelectEl.addEventListener("change", () => {
+          recMode = false;
+          recList = [];
+          recIndex = 0;
+          queuedUris.clear();
+          refreshRecommendations(true);
+        });
+      }
 
-      window.onSpotifyWebPlaybackSDKReady = () => { initWebPlayback(); };
+      const isSafari = /^((?!chrome|android).)*safari/i.test(navigator.userAgent);
+      const isMobile = /android|iphone|ipad|ipod/i.test(navigator.userAgent) || window.matchMedia("(pointer: coarse)").matches;
+
+      if (isSafari || isMobile) {
+        initSafariPlayback();
+      } else {
+        window.onSpotifyWebPlaybackSDKReady = () => { initWebPlayback(); };
+      }
+
+      async function initSafariPlayback() {
+        const status = document.getElementById("status");
+        try {
+          const res = await fetch("/spotify/api/devices/");
+          const data = await res.json();
+          const devices = (data.devices && data.devices.devices) || [];
+          const first = devices[0];
+          if (!first || !first.id) {
+            if (status) {
+              status.textContent = "Open Spotify on a device to enable playback controls.";
+            }
+            return;
+          }
+          deviceId = first.id;
+          await fetch(`/spotify/api/transfer/?device_id=${deviceId}`);
+          if (status) {
+            status.textContent = "Safari mode: controlling Spotify on your active device.";
+          }
+        } catch (_e) {
+          if (status) {
+            status.textContent = "Safari mode: open Spotify to enable playback.";
+          }
+        }
+      }
 
       async function initWebPlayback() {
         const tokenRes = await fetch("/spotify/api/token/");
@@ -330,16 +449,21 @@
         const bar = document.getElementById("progress-bar");
         const elapsed = document.getElementById("time-elapsed");
         const total = document.getElementById("time-total");
+        const slider = document.getElementById("progress-slider");
         if (!duration) {
           bar.style.width = "0%";
           elapsed.textContent = "0:00";
           total.textContent = "0:00";
+          if (slider) slider.value = 0;
           return;
         }
         const pct = Math.min(100, Math.max(0, (progress / duration) * 100));
         bar.style.width = `${pct}%`;
         elapsed.textContent = fmt(progress);
         total.textContent = fmt(duration);
+        if (slider && !slider.dataset.seeking) {
+          slider.value = Math.round(pct);
+        }
       }
 
       function animateProgress() {
@@ -371,6 +495,24 @@
           `radial-gradient(circle, ${cfg.glow}, transparent 70%)`;
       }
 
+      function setMoodSelect(mood) {
+        const select = document.getElementById("moodSelect");
+        if (!select || !mood) return;
+        const target = mood.toLowerCase();
+        for (const opt of select.options) {
+          if (opt.value.toLowerCase() === target) {
+            select.value = opt.value;
+            break;
+          }
+        }
+      }
+
+      function getActiveMood() {
+        if (lockedMood) return lockedMood;
+        const select = document.getElementById("moodSelect");
+        return select ? select.value.toLowerCase() : "neutral";
+      }
+
       function renderUpNext() {
         const up = document.getElementById("up-next");
         if (!recList.length) {
@@ -388,7 +530,11 @@
             <div>
               <div style="font-size:13px;font-weight:600;">${t.name}</div>
               <div class="muted" style="font-size:12px;">${(t.artists || []).join(", ")}</div>
-              <button class="secondary" style="margin-top:6px;" onclick="playUri('${t.spotify_url || ""}')">Play</button>
+              <div style="margin-top:6px;">
+                <button class="secondary" onclick="playUri('${t.spotify_url || ""}')">Play</button>
+                <button class="secondary" onclick="sendFeedback('${t.id}', 'like')">Like</button>
+                <button class="secondary" onclick="sendFeedback('${t.id}', 'dislike')">Dislike</button>
+              </div>
             </div>
           </div>
         `).join("");
@@ -401,16 +547,18 @@
         recInFlight = true;
         lastRecFetchAt = now;
 
-        const mood = document.getElementById("moodSelect").value;
+        const mood = getActiveMood();
         const intensity = document.getElementById("moodIntensity")?.value || 50;
         const current = lastTrackId || "";
+        const mode = document.getElementById("recModeSelect")?.value || "blend";
 
-        const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}&limit=30&current_track=${current}`);
+        const res = await fetch(`/spotify/api/recommend/?mood=${encodeURIComponent(mood)}&intensity=${intensity}&mode=${encodeURIComponent(mode)}&limit=30&current_track=${current}&_=${Date.now()}`);
         const data = await res.json();
         recInFlight = false;
         if (!data.ok || !data.tracks?.length) return false;
 
-        recList = data.tracks;
+        // Filter out locally disliked tracks
+        recList = data.tracks.filter(t => !feedbackDislikes.has(t.id));
         recIndex = 0;
         renderUpNext();
         return true;
@@ -422,9 +570,12 @@
 
         queueInFlight = true;
 
-        const remaining = recList.length - (recIndex + 1);
+        let remaining = recList.length - (recIndex + 1);
         if (remaining < REC_QUEUE_MIN) {
-          await refreshRecommendations(true);
+          const refreshed = await refreshRecommendations(true);
+          if (refreshed) {
+            remaining = recList.length - (recIndex + 1);
+          }
         }
 
         const toQueue = recList.slice(recIndex + 1, recIndex + 1 + REC_QUEUE_ADD + REC_BUFFER_LOOKAHEAD);
@@ -478,10 +629,20 @@
             <div style="font-size: 18px; font-weight: 600;">${track.name || "Unknown Track"}</div>
             <div class="muted">${(track.artists || []).join(", ")} — ${track.album || ""}</div>
             ${track.spotify_url ? `<a class="muted" href="${track.spotify_url}" target="_blank">Open in Spotify</a>` : ""}
+            <div style="margin-top:8px;">
+              <button class="secondary" onclick="sendFeedback('${track.id || ""}', 'like')">Like</button>
+              <button class="secondary" onclick="sendFeedback('${track.id || ""}', 'dislike')">Dislike</button>
+            </div>
           </div>
         `;
 
         setGlow(finalMood);
+        if (finalMood && finalMood !== "unknown") {
+          if (lastVibeCheckManual || !lockedMood) {
+            lockedMood = finalMood.toLowerCase();
+            setMoodSelect(lockedMood);
+          }
+        }
 
         lastProgress = track.progress_ms || 0;
         lastDuration = track.duration_ms || 0;
@@ -498,15 +659,37 @@
         }
 
         maybeAutoQueue(track, activeMoodPlayback || finalMood);
+        lastVibeCheckManual = false;
       }
 
-      async function play() { await fetch(`/spotify/api/play/?device_id=${deviceId || ""}`); }
-      async function pause() { await fetch(`/spotify/api/pause/?device_id=${deviceId || ""}`); }
-      async function previous() { await fetch(`/spotify/api/previous/?device_id=${deviceId || ""}`); }
-      async function nextTrack() { await fetch(`/spotify/api/next/?device_id=${deviceId || ""}`); }
-      async function setVolume(v) { await fetch(`/spotify/api/volume/?v=${v}&device_id=${deviceId || ""}`); }
+      async function manualVibeCheck() {
+        lastVibeCheckManual = true;
+        await checkVibe();
+      }
+
+      async function ensureDevice() {
+        if (!deviceId && isSafari) {
+          await initSafariPlayback();
+        }
+      }
+
+      async function play() { await ensureDevice(); await fetch(`/spotify/api/play/?device_id=${deviceId || ""}`); }
+      async function pause() { await ensureDevice(); await fetch(`/spotify/api/pause/?device_id=${deviceId || ""}`); }
+      async function previous() { await ensureDevice(); await fetch(`/spotify/api/previous/?device_id=${deviceId || ""}`); }
+      async function nextTrack() { await ensureDevice(); await fetch(`/spotify/api/next/?device_id=${deviceId || ""}`); }
+      async function setVolume(v) { await ensureDevice(); await fetch(`/spotify/api/volume/?v=${v}&device_id=${deviceId || ""}`); }
+
+      async function seekToPercent(pct) {
+        if (!lastDuration || !deviceId) return;
+        const pos = Math.max(0, Math.min(lastDuration, Math.floor((pct / 100) * lastDuration)));
+        await fetch(`/spotify/api/seek/?pos=${pos}&device_id=${deviceId || ""}`);
+        lastProgress = pos;
+        lastTick = Date.now();
+        updateProgress(lastProgress, lastDuration);
+      }
 
       async function queueTrack() {
+        await ensureDevice();
         const input = document.getElementById("queueInput").value.trim();
         if (!input) return;
         let uri = input;
@@ -518,23 +701,31 @@
       }
 
       async function queueNowAndPlay() {
+        await ensureDevice();
         if (!deviceId) return;
         const ok = await refreshRecommendations(true);
         if (!ok || !recList.length) return;
 
         recMode = true;
-        recIndex = Math.floor(Math.random() * recList.length);
-        const first = recList[recIndex];
-        await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(first.uri)}&device_id=${deviceId || ""}`);
+        const first = recList[0];
+        recIndex = 0;
+        await fetch(`/spotify/api/play-uris/?uris=${encodeURIComponent(recList.map(t => t.uri).join(","))}&device_id=${deviceId || ""}`);
         queuedUris.clear();
         await queueRecBuffer();
       }
 
       async function nextRecommendation() {
+        await ensureDevice();
         if (!deviceId || !recList.length) return;
 
         recMode = true;
-        recIndex = (recIndex + 1) % recList.length;
+        if (recIndex >= recList.length - 1) {
+          const refreshed = await refreshRecommendations(true);
+          if (!refreshed || !recList.length) return;
+          recIndex = 0;
+        } else {
+          recIndex += 1;
+        }
         const next = recList[recIndex];
         if (!next) return;
 
@@ -543,6 +734,7 @@
       }
 
       async function playUri(url, moodName = null) {
+        await ensureDevice();
         if (!url) return;
         const uri = url.replace("https://open.spotify.com/track/", "spotify:track:");
         await fetch(`/spotify/api/play-uri/?uri=${encodeURIComponent(uri)}&device_id=${deviceId || ""}`);
@@ -556,6 +748,20 @@
           document.getElementById("moodSelect").value = moodName;
           setGlow(moodName);
           activeMoodPlayback = moodName;
+        }
+      }
+
+      async function sendFeedback(trackId, value) {
+        if (!trackId) return;
+        const mood = getActiveMood();
+        const intensity = document.getElementById("moodIntensity")?.value || 50;
+        await fetch(`/spotify/api/recommend/feedback/?track_id=${encodeURIComponent(trackId)}&mood=${encodeURIComponent(mood)}&intensity=${intensity}&value=${value}`);
+        if (value === "dislike") {
+          feedbackDislikes.add(trackId);
+          recList = recList.filter(t => t.id !== trackId);
+          renderUpNext();
+        } else {
+          feedbackLikes.add(trackId);
         }
       }
 
@@ -791,6 +997,18 @@
         if (vibeTimer) return;
         vibeTimer = setInterval(checkVibe, 1000);
         requestAnimationFrame(animateProgress);
+      }
+
+      const progressSlider = document.getElementById("progress-slider");
+      if (progressSlider) {
+        progressSlider.addEventListener("input", () => {
+          progressSlider.dataset.seeking = "1";
+        });
+        progressSlider.addEventListener("change", async () => {
+          const pct = Number(progressSlider.value || 0);
+          await seekToPercent(pct);
+          delete progressSlider.dataset.seeking;
+        });
       }
 
       checkVibe();
