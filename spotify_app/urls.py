@@ -22,6 +22,7 @@ urlpatterns = [
     path("api/play-uri/", views.api_play_uri, name="spotify_api_play_uri"),
     path("api/play-uris/", views.api_play_uris, name="spotify_api_play_uris"),
     path("api/volume/", views.api_volume, name="spotify_api_volume"),
+    path("api/repeat/", views.api_repeat, name="spotify_api_repeat"),
     path("api/seek/", views.api_seek, name="spotify_api_seek"),
     path("api/devices/", views.api_devices, name="spotify_api_devices"),
 

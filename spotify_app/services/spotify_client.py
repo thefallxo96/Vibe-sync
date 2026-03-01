@@ -187,6 +187,15 @@ def spotify_queue_track(access_token: str, track_uri: str, device_id: str | None
     r.raise_for_status()
 
 
+def spotify_set_repeat(access_token: str, state: str, device_id: str | None = None) -> None:
+    # state: off, track, context
+    url = f"{API_BASE}/me/player/repeat?state={state}"
+    if device_id:
+        url += f"&device_id={device_id}"
+    r = spotify_put(url, access_token)
+    r.raise_for_status()
+
+
 def spotify_get_me(access_token: str) -> dict:
     r = spotify_get(f"{API_BASE}/me", access_token)
     r.raise_for_status()

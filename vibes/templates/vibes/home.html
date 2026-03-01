@@ -2,17 +2,195 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>VibeSync</title>
+    <style>
+      :root {
+        --bg1: #050718;
+        --bg2: #0b1030;
+        --text: #eaf2ff;
+        --muted: #9eb0d4;
+        --accent: #59e8ff;
+        --accent-2: #8b7bff;
+        --danger: #ff5f91;
+        --panel: rgba(16, 26, 54, 0.72);
+        --line: rgba(89, 232, 255, 0.18);
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Space Grotesk", system-ui, -apple-system, sans-serif;
+        color: var(--text);
+        background:
+          radial-gradient(circle at 15% 15%, rgba(139, 123, 255, 0.24), transparent 35%),
+          radial-gradient(circle at 85% 12%, rgba(89, 232, 255, 0.2), transparent 35%),
+          radial-gradient(circle at 50% 90%, rgba(255, 95, 145, 0.16), transparent 35%),
+          linear-gradient(180deg, var(--bg2), var(--bg1));
+        position: relative;
+        overflow-x: hidden;
+      }
+      body::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          radial-gradient(circle, rgba(255,255,255,0.15) 1px, transparent 1px),
+          radial-gradient(circle, rgba(255,255,255,0.08) 1px, transparent 1px);
+        background-size: 30px 30px, 54px 54px;
+        background-position: 0 0, 12px 8px;
+        opacity: 0.34;
+      }
+      .wrap {
+        position: relative;
+        z-index: 1;
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 34px 20px 56px;
+      }
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+      .brand {
+        font-size: 24px;
+        letter-spacing: 0.8px;
+        font-weight: 700;
+        text-transform: uppercase;
+        background: linear-gradient(90deg, #7af0ff 0%, #a593ff 40%, #ff7ea5 90%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
+      .hero {
+        display: grid;
+        grid-template-columns: 1.1fr 0.9fr;
+        gap: 22px;
+        margin-top: 24px;
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        padding: 22px;
+        backdrop-filter: blur(14px);
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.45);
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: clamp(34px, 5.5vw, 56px);
+        line-height: 1.04;
+      }
+      .sub {
+        margin: 0;
+        color: var(--muted);
+        max-width: 60ch;
+      }
+      .actions {
+        margin-top: 18px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+      a { text-decoration: none; }
+      button, .btn {
+        border: 1px solid rgba(89, 232, 255, 0.3);
+        background: linear-gradient(135deg, rgba(89, 232, 255, 0.84), rgba(139, 123, 255, 0.9));
+        color: #041326;
+        padding: 10px 14px;
+        border-radius: 10px;
+        font-weight: 700;
+        cursor: pointer;
+        display: inline-block;
+        box-shadow: 0 0 0 rgba(89, 232, 255, 0);
+        transition: transform .2s ease, box-shadow .2s ease;
+      }
+      button:hover, .btn:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 0 16px rgba(89, 232, 255, 0.35);
+      }
+      .btn.secondary {
+        color: #dbe7ff;
+        border-color: rgba(148, 163, 255, 0.18);
+        background: linear-gradient(135deg, rgba(31, 43, 79, 0.96), rgba(42, 58, 102, 0.96));
+      }
+      .btn.danger {
+        color: #2b0012;
+        border-color: rgba(255, 95, 145, 0.7);
+        background: linear-gradient(135deg, rgba(255, 95, 145, 0.9), rgba(236, 72, 153, 0.95));
+      }
+      .status {
+        margin-top: 14px;
+        display: inline-block;
+        border: 1px solid rgba(87, 247, 190, 0.4);
+        background: rgba(87, 247, 190, 0.14);
+        color: #8fffd6;
+        padding: 6px 10px;
+        border-radius: 999px;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .status.off {
+        border-color: rgba(255, 95, 145, 0.34);
+        background: rgba(255, 95, 145, 0.12);
+        color: #ffc2d5;
+      }
+      .list {
+        margin: 0;
+        padding-left: 18px;
+        color: #c9d8f5;
+      }
+      .list li { margin-bottom: 10px; }
+      .muted { color: var(--muted); font-size: 13px; }
+      @media (max-width: 860px) {
+        .hero { grid-template-columns: 1fr; }
+        .wrap { padding-top: 20px; }
+      }
+    </style>
   </head>
   <body>
-    <h1>VibeSync</h1>
-    <p>Turn music into mood.</p>
+    <div class="wrap">
+      <div class="topbar">
+        <div class="brand">VibeSync</div>
+        <a class="btn secondary" href="/spotify/">Open App</a>
+      </div>
 
-    {% if authed %}
-      <p>✅ Connected to Spotify.</p>
-      <a href="/logout/"><button>Logout</button></a>
-    {% else %}
-      <a href="/login/"><button>Connect Spotify</button></a>
-    {% endif %}
+      <div class="hero">
+        <section class="card">
+          <h1>Turn Your Listening Into Intelligent Mood Flow</h1>
+          <p class="sub">
+            Personalized vibe routing powered by your Spotify history, real-time playback, and feedback loops.
+          </p>
+
+          {% if authed %}
+            <div class="status">Connected to Spotify</div>
+            <div class="actions">
+              <a class="btn" href="/spotify/">Launch Vibe Engine</a>
+              <a class="btn secondary" href="/spotify/api/token/">Check Session</a>
+              <a class="btn danger" href="/logout/">Logout</a>
+            </div>
+          {% else %}
+            <div class="status off">Not connected</div>
+            <div class="actions">
+              <a class="btn" href="/login/">Connect Spotify</a>
+              <a class="btn secondary" href="/spotify/">Preview Interface</a>
+            </div>
+          {% endif %}
+        </section>
+
+        <aside class="card">
+          <h3 style="margin-top:0;">What You Get</h3>
+          <ul class="list">
+            <li>Real-time vibe check with now-playing mood mapping.</li>
+            <li>Per-mood recommendations with personal-only mode.</li>
+            <li>Like/dislike feedback to train taste over time.</li>
+            <li>Mood boards + playlist control from one screen.</li>
+          </ul>
+          <p class="muted">Tip: for best results, open the app from the same domain where you logged in.</p>
+        </aside>
+      </div>
+    </div>
   </body>
 </html>

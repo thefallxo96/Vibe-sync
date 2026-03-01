@@ -30,6 +30,7 @@ from .services.spotify_client import (
     spotify_next,
     spotify_previous,
     spotify_queue_track,
+    spotify_set_repeat,
     spotify_get_recommendations,
     spotify_get_available_genre_seeds,
     spotify_get_audio_features_bulk,
@@ -379,9 +380,14 @@ def _top_artist_genres(token: str, available: list[str]) -> list[str]:
     counts: dict[str, int] = {}
     for a in top_artists:
         for g in a.get("genres", []):
-            if g not in available:
+            if available and g not in available:
                 continue
             counts[g] = counts.get(g, 0) + 1
+    # If seed filtering is too strict for this profile, fallback to raw top-artist genres.
+    if not counts:
+        for a in top_artists:
+            for g in a.get("genres", []):
+                counts[g] = counts.get(g, 0) + 1
     ranked = sorted(counts.items(), key=lambda x: x[1], reverse=True)
     return [g for g, _ in ranked][:5]
 
@@ -412,19 +418,46 @@ def _score_track(features: dict, params: dict, mood: str | None = None) -> float
     return score
 
 
-def _dedupe_by_artist(tracks: list[dict], max_items: int) -> list[dict]:
-    seen = set()
+def _dedupe_by_artist(tracks: list[dict], max_items: int, max_per_artist: int = 1) -> list[dict]:
+    artist_counts: dict[str, int] = {}
+    seen_track_ids = set()
     out = []
     for t in tracks:
-        artists = t.get("artists") or []
-        artist_id = (artists[0].get("id") if artists else None)
-        if artist_id and artist_id in seen:
+        tid = t.get("id")
+        if tid and tid in seen_track_ids:
             continue
+        artists = t.get("artists") or []
+        artist_id = (artists[0].get("id") if artists and isinstance(artists[0], dict) else None)
+        if artist_id and artist_counts.get(artist_id, 0) >= max_per_artist:
+            continue
+        if tid:
+            seen_track_ids.add(tid)
         if artist_id:
-            seen.add(artist_id)
+            artist_counts[artist_id] = artist_counts.get(artist_id, 0) + 1
         out.append(t)
         if len(out) >= max_items:
             break
+    return out
+
+
+def _dedupe_by_title_artist(tracks: list[dict]) -> list[dict]:
+    seen = set()
+    out = []
+    for t in tracks:
+        name = (t.get("name") or "").strip().lower()
+        artists = t.get("artists") or []
+        first_artist = ""
+        if artists:
+            first = artists[0]
+            if isinstance(first, dict):
+                first_artist = (first.get("name") or "").strip().lower()
+            else:
+                first_artist = str(first).strip().lower()
+        key = (name, first_artist)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(t)
     return out
 
 
@@ -449,7 +482,7 @@ def _get_artist_genres_bulk(token: str, artist_ids: list[str]) -> dict:
 def _filter_by_hard_limits(tracks: list[dict], features_map: dict, mood: str, intensity: int) -> list[dict]:
     m = (mood or "neutral").lower()
     t = max(0, min(100, intensity)) / 100.0
-    if m not in ("perreo", "hype", "sad", "romantic", "menacing", "neutral"):
+    if m not in ("perreo", "hype", "sad", "romantic", "menacing", "neutral", "chill"):
         return tracks
 
     filtered: list[dict] = []
@@ -486,6 +519,15 @@ def _filter_by_hard_limits(tracks: list[dict], features_map: dict, mood: str, in
             max_acoustic = 1.0
             min_valence = 0.0
             max_valence = 0.25 + 0.05 * (1 - t)
+        elif m == "chill":
+            min_energy = 0.20
+            max_energy = 0.58 - 0.12 * t
+            min_dance = 0.35
+            max_dance = 0.82
+            min_tempo = 65
+            max_tempo = 112 - 12 * t
+            min_valence = 0.20
+            max_valence = 0.78
         elif m == "romantic":
             min_energy = 0.0
             min_dance = 0.0
@@ -516,6 +558,19 @@ def _filter_by_hard_limits(tracks: list[dict], features_map: dict, mood: str, in
 
         if m == "sad":
             if valence <= max_valence and tempo <= max_tempo and energy <= (0.35 - 0.10 * t):
+                filtered.append(tr)
+            continue
+        if m == "chill":
+            if (
+                energy >= min_energy
+                and energy <= max_energy
+                and dance >= min_dance
+                and dance <= max_dance
+                and tempo >= min_tempo
+                and tempo <= max_tempo
+                and valence >= min_valence
+                and valence <= max_valence
+            ):
                 filtered.append(tr)
             continue
         if m == "romantic":
@@ -558,6 +613,43 @@ def _filter_by_hard_limits(tracks: list[dict], features_map: dict, mood: str, in
     return filtered
 
 
+def _post_gate_tracks_for_mood(token: str, tracks: list[dict], mood: str, intensity: int, features_map: dict | None = None) -> list[dict]:
+    if not tracks:
+        return tracks
+    fm = dict(features_map or {})
+    track_ids = [t.get("id") for t in tracks if t.get("id")]
+    missing_ids = [tid for tid in track_ids if tid and tid not in fm]
+    if missing_ids:
+        extra = spotify_get_audio_features_bulk(token, list(dict.fromkeys(missing_ids)))
+        for f in extra.get("audio_features", []) or []:
+            if f and f.get("id"):
+                fm[f["id"]] = f
+
+    gated = _filter_by_hard_limits(tracks, fm, mood, intensity)
+    if gated:
+        tracks = gated
+
+    # Chill-specific second pass to block upbeat/perreo leakage after expansions.
+    if (mood or "").lower() == "chill":
+        chill = []
+        for t in tracks:
+            f = fm.get(t.get("id"))
+            if not f:
+                continue
+            energy = float(f.get("energy") or 0.0)
+            dance = float(f.get("danceability") or 0.0)
+            tempo = float(f.get("tempo") or 0.0)
+            speech = float(f.get("speechiness") or 0.0)
+            if energy > 0.56 or tempo > 112 or speech > 0.18:
+                continue
+            if dance > 0.78 and energy > 0.48:
+                continue
+            chill.append(t)
+        if chill:
+            tracks = chill
+    return tracks
+
+
 def api_recommend(request):
     token = _get_access_token(request)
     if not token:
@@ -593,10 +685,15 @@ def api_recommend(request):
         seen_set.add(current_track)
     history_ids = []
     if user_id:
-        # Perreo needs more reach, so keep a shorter exclusion window
-        history_limit = 40 if mood.lower() == "perreo" else 80
-        seen_rec_limit = 120 if mood.lower() == "perreo" else 200
-        global_seen_limit = 180 if mood.lower() == "perreo" else 300
+        # Perreo needs more reach, personal mode also needs relaxed exclusions
+        if mode == "personal":
+            history_limit = 20
+            seen_rec_limit = 80
+            global_seen_limit = 120
+        else:
+            history_limit = 40 if mood.lower() == "perreo" else 80
+            seen_rec_limit = 120 if mood.lower() == "perreo" else 200
+            global_seen_limit = 180 if mood.lower() == "perreo" else 300
         history_ids = list(
             TrackHistory.objects.filter(spotify_user_id=user_id)
             .order_by("-played_at")
@@ -669,6 +766,7 @@ def api_recommend(request):
         if mood_key in ("chill", "sad", "romantic", "menacing", "neutral") and not seed_genres:
             # Fallback to mood genres only if personal genres are missing
             seed_genres = mood_genres[:5]
+        display_seed_genres = seed_genres[:]
 
         recent = spotify_get_recently_played(token, limit=20)
         recent_items = recent.get("items", [])
@@ -817,16 +915,18 @@ def api_recommend(request):
             rec_tracks = filtered_tracks
 
         # Reduce repeats of the same artists from very recent plays/top artists
-        exclude_artist_ids = set(recent_artist_ids[:40])
-        exclude_artist_ids.update([a.get("id") for a in top_artists[:20] if a.get("id")])
-        def has_excluded_artist(t: dict) -> bool:
-            for a in t.get("artists", []) or []:
-                if a.get("id") in exclude_artist_ids:
-                    return True
-            return False
-        candidate_no_recent_artists = [t for t in rec_tracks if not has_excluded_artist(t)]
-        if len(candidate_no_recent_artists) >= max(20, limit):
-            rec_tracks = candidate_no_recent_artists
+        # Skip this filter in personal mode to preserve taste matching depth.
+        if mode != "personal":
+            exclude_artist_ids = set(recent_artist_ids[:40])
+            exclude_artist_ids.update([a.get("id") for a in top_artists[:20] if a.get("id")])
+            def has_excluded_artist(t: dict) -> bool:
+                for a in t.get("artists", []) or []:
+                    if a.get("id") in exclude_artist_ids:
+                        return True
+                return False
+            candidate_no_recent_artists = [t for t in rec_tracks if not has_excluded_artist(t)]
+            if len(candidate_no_recent_artists) >= max(20, limit):
+                rec_tracks = candidate_no_recent_artists
 
         rec_track_ids = list({t.get("id") for t in rec_tracks if t.get("id")})
         features_bulk = spotify_get_audio_features_bulk(token, rec_track_ids) if rec_track_ids else {}
@@ -909,18 +1009,19 @@ def api_recommend(request):
                 ranked_tracks = perreo_only or ranked_tracks
 
         # Add variety while keeping relevance by shuffling only top candidates
-        top_slice = ranked_tracks[: min(80, len(ranked_tracks))]
+        top_slice_limit = min(max(limit * 3, 120), len(ranked_tracks))
+        top_slice = ranked_tracks[:top_slice_limit]
         random.shuffle(top_slice)
         diverse = _dedupe_by_artist(top_slice, limit)
         if not diverse and rec_tracks:
             diverse = _dedupe_by_artist(rec_tracks, limit)
 
         # If still too small, use search-based expansion as last resort
-        if len(diverse) < max(6, limit // 2):
+        if mood_key in ("perreo", "hype") and len(diverse) < max(6, limit // 2):
             extra_tracks: list[dict] = []
             search_terms = []
             if mood_key == "perreo":
-                for g in (seed_genres or []):
+                for g in (display_seed_genres or []):
                     if g:
                         search_terms.append(f"{mood} {g}")
             if not search_terms:
@@ -958,10 +1059,44 @@ def api_recommend(request):
                         break
                     diverse.append(t)
 
+        # Personal mode: if list is still too short, add direct artist-search expansion.
+        if mode == "personal" and len(diverse) < max(20, limit // 2):
+            artist_names = [a.get("name") for a in top_artists if a.get("name")]
+            random.shuffle(artist_names)
+            artist_queries = artist_names[:12]
+            more_tracks: list[dict] = []
+            for name in artist_queries:
+                try:
+                    res = spotify_search_tracks(token, f"artist:{name}", limit=20, market=market)
+                    more_tracks.extend(res.get("tracks", {}).get("items", []))
+                except Exception:
+                    continue
+
+            seen_extra = {t.get("id") for t in diverse if t.get("id")}
+            for t in more_tracks:
+                tid = t.get("id")
+                if not tid or tid in seen_set or tid in seen_extra:
+                    continue
+                diverse.append(t)
+                seen_extra.add(tid)
+                if len(diverse) >= limit:
+                    break
+
+        # Re-apply mood gate after all late expansions to avoid mood leakage.
+        post_gated = _post_gate_tracks_for_mood(token, diverse, mood, intensity, features_map)
+        if post_gated:
+            diverse = post_gated
+
+        # Final diversity pass after all expansion steps.
+        diverse = _dedupe_by_title_artist(diverse)
+        artist_cap = 2 if mode == "personal" else 1
+        diverse = _dedupe_by_artist(diverse, limit, max_per_artist=artist_cap)
+
+        genre_text = ", ".join(display_seed_genres) if display_seed_genres else "personal taste profile"
         why = (
             f"Matched mood {mood.title()} (intensity {intensity}). "
             f"Seeds: {seed_source} tracks/artists. "
-            f"Genres: {', '.join(seed_genres)}. "
+            f"Genres: {genre_text}. "
             f"Ranked by audio features."
         )
         if diverse and user_id:
@@ -1045,7 +1180,7 @@ def api_recommend(request):
         filtered_tracks = [t for t in ranked_tracks if t.get("id") not in seen_set]
         if filtered_tracks:
             ranked_tracks = filtered_tracks
-        diverse = _dedupe_by_artist(ranked_tracks, 15)
+        diverse = _dedupe_by_artist(ranked_tracks, limit, max_per_artist=(2 if mode == "personal" else 1))
 
         why = f"Ranked your listening history by mood features for {mood.title()} (intensity {intensity})."
         if diverse and user_id:
@@ -1184,6 +1319,20 @@ def api_volume(request):
         return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
     spotify_set_volume(token, v, device_id=device_id)
     return JsonResponse({"ok": True, "volume": v})
+
+
+def api_repeat(request):
+    token = _get_access_token(request)
+    if not token:
+        return JsonResponse({"authenticated": False}, status=401)
+    state = (request.GET.get("state") or "").lower()
+    if state not in ("off", "track", "context"):
+        return JsonResponse({"error": "Invalid repeat state. Use off, track, or context."}, status=400)
+    device_id = request.GET.get("device_id") or _get_device_id(token)
+    if not device_id:
+        return JsonResponse({"ok": False, "error": "No active Spotify device found."}, status=400)
+    spotify_set_repeat(token, state, device_id=device_id)
+    return JsonResponse({"ok": True, "repeat": state})
 
 def api_seek(request):
     token = _get_access_token(request)
